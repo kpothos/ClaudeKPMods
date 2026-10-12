@@ -1508,6 +1508,50 @@ test(
 )
 
 test(
+  'stray decisions on an open design point do not reset its clock',
+  async ($: any, on: any) => {
+    const { clock } = setup(on)
+    await clearBoard($)
+
+    await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        {
+          topic: 'Choose cache policy',
+          state: 'unsettled',
+          decision: 'Discard this first stray decision.',
+        },
+      ],
+    })
+
+    const ui = await $.ui.mount(PANE('dock', 100, 40))
+    let tree = await ui.drawn()
+    let row = rowWith(tree, 3, 'D1 Choose cache policy')
+
+    expect(row).toContain(timeAt(BASE_TIME))
+
+    await clock.advance(7 * 60_000)
+    await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        {
+          topic: 'Choose cache policy',
+          state: 'unsettled',
+          decision: 'Discard this different stray decision.',
+        },
+      ],
+    })
+
+    tree = await ui.drawn()
+    row = rowWith(tree, 3, 'D1 Choose cache policy')
+    expect(row).toContain(timeAt(BASE_TIME))
+    expect(row).not.toContain(timeAt(BASE_TIME + 7 * 60_000))
+
+    await ui.unmount()
+  },
+)
+
+test(
   'a settled design point clock changes with its decision and stays when unchanged',
   async ($: any, on: any) => {
     const { clock } = setup(on)
@@ -3179,6 +3223,55 @@ test(
     after = boxRows(await ui.drawn(), 0)
     expect(after).not.toStrictEqual(before)
     expect(after.join('\n')).toContain('Short wheel item 02')
+
+    await ui.unmount()
+  },
+)
+
+test(
+  'one wheel-up moves rows from a stale offset after a long list gets shorter',
+  async ($: any, on: any) => {
+    setup(on)
+    await clearBoard($)
+
+    await $.tool.call({
+      tool: TASKS_TOOL,
+      tasks: Array.from({ length: 12 }, (_, index) => ({
+        subject: `Stale wheel item ${String(index + 1).padStart(2, '0')}`,
+        status: 'pending',
+      })),
+    })
+
+    const bodyRows = 6
+    const ui = await $.ui.mount(PANE('inline', 80, bodyRows))
+    await ui.drawn()
+    await scrollBoard($, 1000, bodyRows)
+
+    const far = boxRows(await ui.drawn(), 0)
+    expect(far.join('\n')).toContain('Stale wheel item 12')
+
+    await $.tool.call({
+      tool: TASKS_TOOL,
+      tasks: Array.from({ length: 4 }, (_, index) => ({
+        subject: `Stale wheel item ${String(index + 1).padStart(2, '0')}`,
+        status: 'pending',
+      })),
+    })
+
+    const before = boxRows(await ui.drawn(), 0)
+    expect(before.join('\n')).toContain('Stale wheel item 03')
+
+    const moved = await scrollBoard(
+      $,
+      -1,
+      bodyRows,
+      { column: 2, row: 2 },
+    )
+    expect(moved).toStrictEqual({})
+
+    const after = boxRows(await ui.drawn(), 0)
+    expect(after).not.toStrictEqual(before)
+    expect(after.join('\n')).toContain('Stale wheel item 02')
 
     await ui.unmount()
   },
