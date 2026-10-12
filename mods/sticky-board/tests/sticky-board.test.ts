@@ -4,13 +4,15 @@ const TASKS_TOOL = 'mcp__sticky-board__tasks'
 const QUESTIONS_TOOL = 'mcp__sticky-board__questions'
 const ANSWERED_TOOL = 'mcp__sticky-board__answered'
 const PRS_TOOL = 'mcp__sticky-board__prs'
+const DESIGN_TOOL = 'mcp__sticky-board__design'
 const BOARD_TOOLS = [
   TASKS_TOOL,
   QUESTIONS_TOOL,
   ANSWERED_TOOL,
   PRS_TOOL,
+  DESIGN_TOOL,
 ] as const
-const BOX_NAMES = ['tasks', 'questions', 'answers', 'prs'] as const
+const BOX_NAMES = ['tasks', 'questions', 'answers', 'design'] as const
 const BASE_TIME = 1760300000000
 
 const PANE = (
@@ -28,6 +30,26 @@ const PANE = (
     bodyColumns,
     placement,
     scroll: { offset: 0, bodyRows },
+    view: {},
+  },
+})
+
+const ABOVE_PROMPT = (
+  hasSurvey: boolean,
+  bodyColumns = 120,
+  maxRows = 20,
+  bodyRows = maxRows,
+  offset = 0,
+): any => ({
+  plugin: 'sticky-board',
+  surface: 'terminal',
+  component: 'AbovePrompt',
+  props: {
+    hasSurvey,
+    isWorking: false,
+    maxRows,
+    bodyColumns,
+    scroll: { offset, bodyRows },
     view: {},
   },
 })
@@ -167,6 +189,12 @@ const boxRowNodes = (tree: any, boxIndex: number): any[] =>
 const boxRows = (tree: any, boxIndex: number): string[] =>
   boxRowNodes(tree, boxIndex).map(textOf)
 
+const abovePromptRowNodes = (tree: any): any[] =>
+  (tree?.children ?? []).filter((child: any) => child?.type === 'Box')
+
+const abovePromptRows = (tree: any): string[] =>
+  abovePromptRowNodes(tree).map(textOf)
+
 const rowNodeWith = (tree: any, boxIndex: number, text: string): any =>
   boxRowNodes(tree, boxIndex).find(row => textOf(row).includes(text))
 
@@ -214,6 +242,12 @@ const numberQuestionInput = (question: string): any => ({
   multiSelect: false,
 })
 
+const tallDesignPoints = (): any[] =>
+  Array.from({ length: 10 }, (_, index) => ({
+    topic: `Design point ${String(index + 1).padStart(2, '0')}`,
+    state: 'unsettled',
+  }))
+
 const populateTallBoard = async ($: any): Promise<void> => {
   await $.tool.call({
     tool: TASKS_TOOL,
@@ -247,6 +281,11 @@ const populateTallBoard = async ($: any): Promise<void> => {
       status: `Still running ${String(index).padStart(2, '0')}.`,
     })
   }
+
+  await $.tool.call({
+    tool: DESIGN_TOOL,
+    points: tallDesignPoints(),
+  })
 }
 
 const scrollBoard = (
@@ -1338,12 +1377,346 @@ test(
 )
 
 test(
-  'pull-request tool rejects malformed reports and never reuses a removed label',
+  'design tool is all-or-nothing, drops inapplicable decisions, and keeps labels by topic once each',
   async ($: any, on: any) => {
     setup(on)
     await clearBoard($)
 
+    const first = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [{ topic: '  Keep topic  ', state: 'unsettled' }],
+    })
+    expect(first).toStrictEqual({
+      result:
+        'The board shows 1 design point.\nD1 [unsettled] Keep topic',
+    })
+
+    const invalidPoints: any[] = [
+      { topic: 'Not a list', state: 'unsettled' },
+      [null],
+      [17],
+      ['not an object'],
+      [{}],
+      [{ topic: '   ', state: 'unsettled' }],
+      [{ topic: 'Bad state', state: 'unknown' }],
+      [{ topic: 'No decision', state: 'settled' }],
+      [{ topic: 'Blank decision', state: 'settled', decision: '   ' }],
+      [
+        { topic: 'Partial replacement', state: 'unsettled' },
+        { topic: 'Broken settled point', state: 'settled' },
+      ],
+    ]
+
+    for (const points of invalidPoints) {
+      const rejected = await $.tool.call({
+        tool: DESIGN_TOOL,
+        points,
+      } as any)
+
+      expect(
+        String(rejected.result).startsWith('Nothing was changed:'),
+      ).toBe(true)
+    }
+
+    const unchanged = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [{ topic: 'Keep topic', state: 'unsettled' }],
+    })
+    expect(unchanged).toStrictEqual(first)
+
+    const reordered = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        {
+          topic: 'New topic',
+          state: 'discussing',
+          decision: 'This must be dropped.',
+        },
+        {
+          topic: 'Keep topic',
+          state: 'unsettled',
+          decision: 'This must also be dropped.',
+        },
+      ],
+    })
+    expect(reordered).toStrictEqual({
+      result: [
+        'The board shows 2 design points.',
+        'D2 [discussing] New topic',
+        'D1 [unsettled] Keep topic',
+      ].join('\n'),
+    })
+
+    const duplicated = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        { topic: 'Keep topic', state: 'unsettled' },
+        { topic: 'Keep topic', state: 'discussing' },
+      ],
+    })
+    expect(duplicated).toStrictEqual({
+      result: [
+        'The board shows 2 design points.',
+        'D1 [unsettled] Keep topic',
+        'D3 [discussing] Keep topic',
+      ].join('\n'),
+    })
+
+    const duplicatesUnchanged = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        { topic: 'Keep topic', state: 'unsettled' },
+        { topic: 'Keep topic', state: 'discussing' },
+      ],
+    })
+    expect(duplicatesUnchanged).toStrictEqual(duplicated)
+
+    const cleared = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [],
+    })
+    expect(cleared).toStrictEqual({
+      result: 'The board shows 0 design points.',
+    })
+
+    const readded = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [{ topic: 'Keep topic', state: 'settled', decision: 'Keep it.' }],
+    })
+    expect(readded).toStrictEqual({
+      result:
+        'The board shows 1 design point.\nD4 [settled] Keep topic: Keep it.',
+    })
+
+    const reworded = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        {
+          topic: 'Keep topic, reworded',
+          state: 'settled',
+          decision: 'Keep the revised wording.',
+        },
+      ],
+    })
+    expect(reworded).toStrictEqual({
+      result: [
+        'The board shows 1 design point.',
+        'D5 [settled] Keep topic, reworded: Keep the revised wording.',
+      ].join('\n'),
+    })
+  },
+)
+
+test(
+  'a settled design point clock changes with its decision and stays when unchanged',
+  async ($: any, on: any) => {
+    const { clock } = setup(on)
+    await clearBoard($)
+
+    const first = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        {
+          topic: 'Choose database',
+          state: 'settled',
+          decision: 'Use SQLite.',
+        },
+      ],
+    })
+    expect(first).toStrictEqual({
+      result:
+        'The board shows 1 design point.\nD1 [settled] Choose database: Use SQLite.',
+    })
+
     const ui = await $.ui.mount(PANE('dock', 100, 40))
+    let tree = await ui.drawn()
+    let row = rowWith(tree, 3, 'D1 Choose database')
+
+    expect(row).toContain(timeAt(BASE_TIME))
+    expect(textOf(borderedBoxes(tree)[3])).toContain(
+      'Decision: Use SQLite.',
+    )
+
+    await clock.advance(7 * 60_000)
+    const changed = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        {
+          topic: 'Choose database',
+          state: 'settled',
+          decision: 'Use Postgres.',
+        },
+      ],
+    })
+    expect(changed).toStrictEqual({
+      result:
+        'The board shows 1 design point.\nD1 [settled] Choose database: Use Postgres.',
+    })
+
+    tree = await ui.drawn()
+    row = rowWith(tree, 3, 'D1 Choose database')
+    expect(row).toContain(timeAt(BASE_TIME + 7 * 60_000))
+    expect(row).not.toContain(timeAt(BASE_TIME))
+    expect(textOf(borderedBoxes(tree)[3])).toContain(
+      'Decision: Use Postgres.',
+    )
+    expect(textOf(borderedBoxes(tree)[3])).not.toContain(
+      'Decision: Use SQLite.',
+    )
+
+    await clock.advance(6 * 60_000)
+    const unchanged = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        {
+          topic: 'Choose database',
+          state: 'settled',
+          decision: 'Use Postgres.',
+        },
+      ],
+    })
+    expect(unchanged).toStrictEqual(changed)
+
+    tree = await ui.drawn()
+    row = rowWith(tree, 3, 'D1 Choose database')
+    expect(row).toContain(timeAt(BASE_TIME + 7 * 60_000))
+    expect(row).not.toContain(timeAt(BASE_TIME + 13 * 60_000))
+
+    await ui.unmount()
+  },
+)
+
+test(
+  'design points draw in sent order with marks, decisions, summaries, and conditional boxes',
+  async ($: any, on: any) => {
+    setup(on)
+    await clearBoard($)
+
+    const result = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        { topic: 'Choose storage', state: 'unsettled' },
+        {
+          topic: 'Select region',
+          state: 'settled',
+          decision: 'Use us-east-1.',
+        },
+        { topic: 'Set cache policy', state: 'discussing' },
+      ],
+    })
+    expect(result).toStrictEqual({
+      result: [
+        'The board shows 3 design points.',
+        'D1 [unsettled] Choose storage',
+        'D2 [settled] Select region: Use us-east-1.',
+        'D3 [discussing] Set cache policy',
+      ].join('\n'),
+    })
+
+    const dock = await $.ui.mount(PANE('dock', 100, 40))
+    let dockTree = await dock.drawn()
+    const designRows = boxRows(dockTree, 3)
+    let designText = textOf(borderedBoxes(dockTree)[3])
+
+    expect(borderedBoxes(dockTree)).toHaveLength(4)
+    expect(designText).toContain('Design points 1 settled, 2 to go')
+    expect(rowWith(dockTree, 3, 'D1 Choose storage')).toContain('◻')
+    expect(rowWith(dockTree, 3, 'D2 Select region')).toContain('✔')
+    expect(rowWith(dockTree, 3, 'D3 Set cache policy')).toContain('◼')
+    expect(designRows.indexOf(rowWith(dockTree, 3, 'D1 Choose storage')))
+      .toBeLessThan(
+        designRows.indexOf(rowWith(dockTree, 3, 'D2 Select region')),
+      )
+    expect(designRows.indexOf(rowWith(dockTree, 3, 'D2 Select region')))
+      .toBeLessThan(
+        designRows.indexOf(rowWith(dockTree, 3, 'Decision: Use us-east-1.')),
+      )
+    expect(
+      designRows.indexOf(rowWith(dockTree, 3, 'Decision: Use us-east-1.')),
+    ).toBeLessThan(
+      designRows.indexOf(rowWith(dockTree, 3, 'D3 Set cache policy')),
+    )
+
+    await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        {
+          topic: 'Choose storage',
+          state: 'settled',
+          decision: 'Use SQLite.',
+        },
+        {
+          topic: 'Select region',
+          state: 'settled',
+          decision: 'Use us-east-1.',
+        },
+        {
+          topic: 'Set cache policy',
+          state: 'settled',
+          decision: 'Cache for five minutes.',
+        },
+      ],
+    })
+
+    dockTree = await dock.drawn()
+    designText = textOf(borderedBoxes(dockTree)[3])
+    expect(designText).toContain('Design points all 3 settled')
+    expect(designText).toContain('Decision: Use SQLite.')
+    expect(designText).toContain('Decision: Cache for five minutes.')
+
+    await dock.unmount()
+
+    const inline = await $.ui.mount(PANE('inline', 100, 10))
+    let inlineTree = await inline.drawn()
+    expect(borderedBoxes(inlineTree)).toHaveLength(1)
+    expect(textOf(borderedBoxes(inlineTree)[0])).toContain('Design points')
+    expect(textOf(borderedBoxes(inlineTree)[0])).toContain(
+      'D1 Choose storage',
+    )
+
+    await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [],
+    })
+
+    inlineTree = await inline.drawn()
+    expect(borderedBoxes(inlineTree)).toHaveLength(1)
+    expect(textOf(borderedBoxes(inlineTree)[0])).toContain('No tasks yet.')
+    expect(textOf(inlineTree)).not.toContain('Design points')
+
+    await inline.unmount()
+
+    const emptyDock = await $.ui.mount(PANE('dock', 100, 40))
+    dockTree = await emptyDock.drawn()
+    expect(borderedBoxes(dockTree)).toHaveLength(3)
+    expect(textOf(dockTree)).not.toContain('Design points')
+
+    await emptyDock.unmount()
+  },
+)
+
+test(
+  'pull-request tool rejects malformed reports, passes an empty or surveyed band through, and never reuses a removed label',
+  async ($: any, on: any) => {
+    const bottomTrees: any[] = []
+    on(
+      'ui.render',
+      { component: 'AbovePrompt' },
+      async ($: any, e: any) => {
+        const { Box, Text } = $.ui.resolve(e)
+        const tree = Box({
+          children: Text({ children: 'Bottom AbovePrompt tree.' }),
+        })
+        bottomTrees.push(tree)
+        return tree
+      },
+    )
+    setup(on)
+    await clearBoard($)
+
+    const band = await $.ui.mount(ABOVE_PROMPT(false))
+    expect(await band.drawn()).toStrictEqual(bottomTrees.at(-1))
+
     const badName = await $.tool.call({
       tool: PRS_TOOL,
       name: '   ',
@@ -1378,11 +1751,7 @@ test(
     expect(badStage).toStrictEqual({ result: invalidMessage })
     expect(missingStage).toStrictEqual({ result: invalidMessage })
     expect(badOk).toStrictEqual({ result: invalidMessage })
-
-    let tree = await ui.drawn()
-    expect(textOf(borderedBoxes(tree)[3])).toContain(
-      'No pull requests in progress.',
-    )
+    expect(await band.drawn()).toStrictEqual(bottomTrees.at(-1))
 
     const added = await $.tool.call({
       tool: PRS_TOOL,
@@ -1397,11 +1766,18 @@ test(
         'P1 Release: stage 1 of 5 (Pre-PR: running the test suites), ok.',
     })
 
-    tree = await ui.drawn()
-    const beforeInvalidUpdate = textOf(borderedBoxes(tree)[3])
-    expect(rowWith(tree, 3, 'Release #17')).toContain('P1 Release #17')
-    expect(beforeInvalidUpdate).toContain('Running tests.')
+    let tree = await band.drawn()
+    let rows = abovePromptRows(tree)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toContain(timeAt(BASE_TIME))
+    expect(rows[0]).toContain('✔')
+    expect(rows[0]).toContain('P1 Release #17')
+    expect(rows[0]).toContain(
+      '■□□□□ 1/5 Pre-PR: running the test suites',
+    )
+    expect(rows[0]).toContain('Running tests.')
 
+    const beforeInvalidUpdate = textOf(tree)
     const rejected = await $.tool.call({
       tool: PRS_TOOL,
       name: 'Release',
@@ -1409,9 +1785,7 @@ test(
       ok: false,
     } as any)
     expect(rejected).toStrictEqual({ result: invalidMessage })
-    expect(textOf(borderedBoxes(await ui.drawn())[3])).toBe(
-      beforeInvalidUpdate,
-    )
+    expect(textOf(await band.drawn())).toBe(beforeInvalidUpdate)
 
     const removed = await $.tool.call({
       tool: PRS_TOOL,
@@ -1419,12 +1793,7 @@ test(
       remove: true,
     })
     expect(removed).toStrictEqual({ result: 'Release is off the board.' })
-
-    tree = await ui.drawn()
-    expect(textOf(borderedBoxes(tree)[3])).toContain(
-      'No pull requests in progress.',
-    )
-    expect(textOf(borderedBoxes(tree)[3])).not.toContain('Release #17')
+    expect(await band.drawn()).toStrictEqual(bottomTrees.at(-1))
 
     const readded = await $.tool.call({
       tool: PRS_TOOL,
@@ -1437,11 +1806,71 @@ test(
       result: 'P2 Release: stage 5 of 5 (Live), not ok.',
     })
 
-    tree = await ui.drawn()
-    expect(rowWith(tree, 3, 'Release')).toContain('P2 Release')
-    expect(textOf(borderedBoxes(tree)[3])).not.toContain('#17')
+    tree = await band.drawn()
+    rows = abovePromptRows(tree)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toContain('✖')
+    expect(rows[0]).toContain('P2 Release')
+    expect(rows[0]).not.toContain('#17')
+    expect(rows[0]).toContain('■■■■■ 5/5 Live')
+    expect(rows[0]).toContain('Needs attention.')
 
-    await ui.unmount()
+    const surveyed = await $.ui.mount(ABOVE_PROMPT(true))
+    expect(await surveyed.drawn()).toStrictEqual(bottomTrees.at(-1))
+
+    await surveyed.unmount()
+    await band.unmount()
+  },
+)
+
+test(
+  'pull-request names and statuses collapse whitespace and canonical names update the same row',
+  async ($: any, on: any) => {
+    setup(on)
+    await clearBoard($)
+
+    const reported = await $.tool.call({
+      tool: PRS_TOOL,
+      name: 'release\ncandidate',
+      stage: 'ci',
+      ok: true,
+      status: 'tests\nrunning',
+    })
+    expect(reported).toStrictEqual({
+      result:
+        'P1 release candidate: stage 3 of 5 (CI tests running), ok.',
+    })
+    expect(String(reported.result)).not.toContain('\n')
+
+    const band = await $.ui.mount(ABOVE_PROMPT(false))
+    let rows = abovePromptRows(await band.drawn())
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toContain('P1 release candidate')
+    expect(rows[0]).toContain('tests running')
+    expect(rows[0]).not.toContain('\n')
+
+    const updated = await $.tool.call({
+      tool: PRS_TOOL,
+      name: 'release candidate',
+      stage: 'deploy',
+      ok: false,
+      status: 'ready   to deploy',
+    })
+    expect(updated).toStrictEqual({
+      result:
+        'P1 release candidate: stage 4 of 5 (Merging and deploying), not ok.',
+    })
+
+    rows = abovePromptRows(await band.drawn())
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toContain('P1 release candidate')
+    expect(rows[0]).toContain('ready to deploy')
+    expect(rows[0]).not.toContain('P2')
+    expect(rows[0]).not.toContain('tests running')
+    expect(rows[0]).not.toContain('\n')
+
+    await band.unmount()
   },
 )
 
@@ -1485,22 +1914,26 @@ test(
         'P1 PR A: stage 4 of 5 (Merging and deploying), ok.',
     })
 
-    const ui = await $.ui.mount(PANE('dock', 120, 100))
-    let tree = await ui.drawn()
-    let rows = boxRows(tree, 3)
-    let all = textOf(borderedBoxes(tree)[3])
+    const band = await $.ui.mount(ABOVE_PROMPT(false))
+    let tree = await band.drawn()
+    let rows = abovePromptRows(tree)
+    let all = textOf(tree)
     const bIndex = rows.findIndex(row => row.includes('PR B'))
     const aIndex = rows.findIndex(row => row.includes('PR A #41'))
 
+    expect(rows).toHaveLength(2)
     expect(bIndex).toBeGreaterThanOrEqual(0)
     expect(aIndex).toBeGreaterThan(bIndex)
     expect(rows[bIndex]).toContain('P2 PR B')
+    expect(rows[bIndex]).toContain('✖')
+    expect(rows[bIndex]).toContain('■■■□□ 3/5 CI tests running')
+    expect(rows[bIndex]).toContain('Tests failed.')
     expect(rows[aIndex]).toContain('P1 PR A #41')
     expect(rows[aIndex]).toContain('✔')
-    expect(rows[aIndex + 1]).toContain(
+    expect(rows[aIndex]).toContain(
       '■■■■□ 4/5 Merging and deploying',
     )
-    expect(rows[aIndex + 2]).toContain('Deploying.')
+    expect(rows[aIndex]).toContain('Deploying.')
     expect(all).not.toContain('Opened.')
 
     for (const letter of ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']) {
@@ -1512,10 +1945,11 @@ test(
       })
     }
 
-    tree = await ui.drawn()
-    all = textOf(borderedBoxes(tree)[3])
-    expect(all).toContain('Pull requests 10 · 1 not ok')
-    expect(rowWith(tree, 3, 'PR K')).toContain('P11 PR K')
+    tree = await band.drawn()
+    rows = abovePromptRows(tree)
+    all = textOf(tree)
+    expect(rows).toHaveLength(10)
+    expect(rows[0]).toContain('P11 PR K')
 
     const expectedOrder = [
       'PR K',
@@ -1536,12 +1970,12 @@ test(
     }
     expect(all).not.toContain('PR A')
 
-    await ui.unmount()
+    await band.unmount()
   },
 )
 
 test(
-  'pull-request drawing shows every label, stage, health mark, status, number, and title summary',
+  'pull-request AbovePrompt rows show every label, stage, health mark, status, number, and clock',
   async ($: any, on: any) => {
     setup(on)
     await clearBoard($)
@@ -1603,12 +2037,12 @@ test(
       })
     }
 
-    const ui = await $.ui.mount(PANE('dock', 120, 60))
-    let tree = await ui.drawn()
-    let prBox = borderedBoxes(tree)[3]
-    let all = textOf(prBox)
+    const band = await $.ui.mount(ABOVE_PROMPT(false))
+    let tree = await band.drawn()
+    let rows = abovePromptRows(tree)
+    let all = textOf(tree)
 
-    expect(all).toContain('Pull requests 5 · 1 not ok')
+    expect(rows).toHaveLength(5)
     expect(all.indexOf('Live release')).toBeLessThan(
       all.indexOf('Prep release'),
     )
@@ -1619,12 +2053,14 @@ test(
       const strip = `${'■'.repeat(place)}${'□'.repeat(5 - place)}`
       const shownName =
         'number' in one ? `${one.name} #${one.number}` : one.name
-      const titleRow = rowWith(tree, 3, shownName)
+      const row = rows.find(candidate => candidate.includes(shownName))
 
-      expect(titleRow).toContain(`P${place} ${shownName}`)
-      expect(titleRow).toContain(one.ok ? '✔' : '✖')
-      expect(all).toContain(`${strip} ${place}/5 ${one.label}`)
-      expect(all).toContain(one.status)
+      expect(row).toBeDefined()
+      expect(row).toContain(timeAt(BASE_TIME))
+      expect(row).toContain(`P${place} ${shownName}`)
+      expect(row).toContain(one.ok ? '✔' : '✖')
+      expect(row).toContain(`${strip} ${place}/5 ${one.label}`)
+      expect(row).toContain(one.status)
     }
 
     const recovered = await $.tool.call({
@@ -1639,22 +2075,23 @@ test(
         'P3 CI release: stage 3 of 5 (CI tests running), ok.',
     })
 
-    tree = await ui.drawn()
-    prBox = borderedBoxes(tree)[3]
-    all = textOf(prBox)
+    tree = await band.drawn()
+    rows = abovePromptRows(tree)
+    all = textOf(tree)
+    const recoveredRow = rows.find(row => row.includes('CI release'))
 
-    expect(all).toContain('Pull requests 5 · all ok')
-    expect(rowWith(tree, 3, 'CI release')).toContain('P3 CI release')
-    expect(rowWith(tree, 3, 'CI release')).toContain('✔')
-    expect(all).toContain('Tests recovered.')
+    expect(recoveredRow).toBeDefined()
+    expect(recoveredRow).toContain('P3 CI release')
+    expect(recoveredRow).toContain('✔')
+    expect(recoveredRow).toContain('Tests recovered.')
     expect(all).not.toContain('One test is failing.')
 
-    await ui.unmount()
+    await band.unmount()
   },
 )
 
 test(
-  'session.end clear and resume empty all four boxes, reset four offsets, and restart every label sequence',
+  'session.end clear and resume empty all state, reset four pane offsets, and restart every label sequence',
   async ($: any, on: any) => {
     setup(on)
     await clearBoard($)
@@ -1680,6 +2117,8 @@ test(
           topRows[index],
         )
       }
+      expect(await ui.find({ key: 'prs-up' })).toBeUndefined()
+      expect(await ui.find({ key: 'prs-down' })).toBeUndefined()
 
       const sessionId = `session-${reason}`
       const ended = await $.session.end({
@@ -1690,11 +2129,14 @@ test(
 
       expect(ended).toStrictEqual({ sessionId })
 
-      const empty = textOf(await ui.drawn())
+      const emptyTree = await ui.drawn()
+      const empty = textOf(emptyTree)
+      expect(borderedBoxes(emptyTree)).toHaveLength(3)
       expect(empty).toContain('No tasks yet.')
       expect(empty).toContain('No open questions.')
       expect(empty).toContain('No answered questions yet.')
-      expect(empty).toContain('No pull requests in progress.')
+      expect(empty).not.toContain('Design points')
+      expect(empty).not.toContain('Pull request')
 
       await populateTallBoard($)
 
@@ -1703,6 +2145,26 @@ test(
       ).toStrictEqual(
         Array.from({ length: 10 }, (_, index) => `Q${index + 1}`),
       )
+
+      const designResult = await $.tool.call({
+        tool: DESIGN_TOOL,
+        points: tallDesignPoints(),
+      })
+      expect(designResult.result).toContain(
+        'D1 [unsettled] Design point 01',
+      )
+      expect(designResult.result).toContain(
+        'D10 [unsettled] Design point 10',
+      )
+
+      const prResult = await $.tool.call({
+        tool: PRS_TOOL,
+        name: 'Pull request 01',
+        stage: 'ci',
+        ok: true,
+        status: 'Still running 01.',
+      })
+      expect(prResult.result).toContain('P1 Pull request 01:')
 
       const resetTree = await ui.drawn()
       for (let index = 0; index < BOX_NAMES.length; index += 1) {
@@ -1718,7 +2180,7 @@ test(
 )
 
 test(
-  'session.end with another reason preserves all board state, labels, and four scroll offsets',
+  'session.end with another reason preserves all board state, labels, pull requests, and four scroll offsets',
   async ($: any, on: any) => {
     setup(on)
     await clearBoard($)
@@ -1726,6 +2188,7 @@ test(
 
     const bodyRows = 32
     const ui = await $.ui.mount(PANE('dock', 80, bodyRows))
+    const band = await $.ui.mount(ABOVE_PROMPT(false))
     await scrollBoard($, -1000, bodyRows)
     await scrollBoard($, 2, bodyRows)
 
@@ -1738,6 +2201,7 @@ test(
     const rowsBefore = BOX_NAMES.map((_, index) =>
       boxRows(beforeTree, index),
     )
+    const bandBefore = textOf(await band.drawn())
     const questionsBefore = await listQuestions($)
 
     const sessionId = 'session-prompt-input-exit'
@@ -1757,6 +2221,7 @@ test(
         await ui.find({ key: `${BOX_NAMES[index]}-up` }),
       ).toBeDefined()
     }
+    expect(textOf(await band.drawn())).toBe(bandBefore)
     expect(await listQuestions($)).toStrictEqual(questionsBefore)
 
     const afterAdd = parseQuestions(
@@ -1771,12 +2236,32 @@ test(
       text: 'Question after exit?',
     })
 
+    const designAfterAdd = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        ...tallDesignPoints(),
+        { topic: 'Design after exit', state: 'unsettled' },
+      ],
+    })
+    expect(designAfterAdd.result).toContain(
+      'D11 [unsettled] Design after exit',
+    )
+
+    const prAfterAdd = await $.tool.call({
+      tool: PRS_TOOL,
+      name: 'Pull request after exit',
+      stage: 'open',
+      ok: true,
+    })
+    expect(prAfterAdd.result).toContain('P7 Pull request after exit:')
+
+    await band.unmount()
     await ui.unmount()
   },
 )
 
 test(
-  'subagent calls to all four sticky-board tools report no change and preserve the main board',
+  'subagent calls to all five sticky-board tools report no change and preserve the main board and band',
   async ($: any, on: any) => {
     setup(on)
     await clearBoard($)
@@ -1803,9 +2288,15 @@ test(
       stage: 'open',
       ok: true,
     })
+    await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [{ topic: 'Main design point', state: 'discussing' }],
+    })
 
     const ui = await $.ui.mount(PANE('dock', 100, 40))
+    const band = await $.ui.mount(ABOVE_PROMPT(false))
     const before = textOf(await ui.drawn())
+    const bandBefore = textOf(await band.drawn())
     const questionsBefore = await listQuestions($)
 
     const taskResult = await $.tool.call({
@@ -1831,6 +2322,11 @@ test(
       remove: true,
       agentId: 'agent-1',
     } as any)
+    const designResult = await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [{ topic: 'Subagent design point', state: 'settled', decision: 'No.' }],
+      agentId: 'agent-1',
+    } as any)
 
     const unchanged =
       'Only the main conversation keeps the sticky board; nothing was changed.'
@@ -1838,6 +2334,7 @@ test(
     expect(questionResult).toEqual({ result: unchanged })
     expect(answerResult).toEqual({ result: unchanged })
     expect(prResult).toEqual({ result: unchanged })
+    expect(designResult).toEqual({ result: unchanged })
     expect(await listQuestions($)).toStrictEqual(questionsBefore)
 
     const all = textOf(await ui.drawn())
@@ -1845,11 +2342,18 @@ test(
     expect(all).toContain('Main task')
     expect(all).toContain('Main question?')
     expect(all).toContain('Main answered question?')
-    expect(all).toContain('Main PR')
+    expect(all).toContain('Main design point')
+    expect(all).not.toContain('Main PR')
     expect(all).not.toContain('Subagent task')
     expect(all).not.toContain('Subagent question?')
     expect(all).not.toContain('Subagent answered question?')
+    expect(all).not.toContain('Subagent design point')
 
+    const bandAfter = textOf(await band.drawn())
+    expect(bandAfter).toBe(bandBefore)
+    expect(bandAfter).toContain('Main PR')
+
+    await band.unmount()
     await ui.unmount()
   },
 )
@@ -2049,7 +2553,7 @@ test(
 )
 
 test(
-  'prompt.submit passes non-person origins through without adding question or named-entry context',
+  'prompt.submit passes non-person origins through without adding question, design, or named-entry context',
   async ($: any, on: any) => {
     setup(on)
     await clearBoard($)
@@ -2062,6 +2566,10 @@ test(
       tool: QUESTIONS_TOOL,
       add: ['Still open?'],
       resolve: [],
+    })
+    await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [{ topic: 'Still unsettled', state: 'unsettled' }],
     })
 
     const origins: any[] = [
@@ -2080,7 +2588,7 @@ test(
     ]
 
     for (const origin of origins) {
-      const text = `Message from ${origin.kind} about T1`
+      const text = `Message from ${origin.kind} about T1 and D1`
       const result = await $.prompt.submit({
         text,
         context: ['keep this'],
@@ -2140,7 +2648,110 @@ test(
 )
 
 test(
-  'prompt.compose keeps existing sections and appends the sticky-board session section when all four tools are available',
+  'prompt.submit supplies open design agenda context and whole-word named design entries until all points settle',
+  async ($: any, on: any) => {
+    setup(on)
+    await clearBoard($)
+
+    await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        {
+          topic: 'Choose database',
+          state: 'settled',
+          decision: 'Use SQLite.',
+        },
+        { topic: 'Choose cache', state: 'discussing' },
+        { topic: 'Choose retries', state: 'unsettled' },
+      ],
+    })
+
+    const designContext = [
+      "Design points on the user's sticky board:",
+      '- D1 [settled] Choose database: Use SQLite.',
+      '- D2 [discussing] Choose cache',
+      '- D3 [unsettled] Choose retries',
+      'Keep the discussion to the point marked discussing. Mark a point settled only when the user has clearly agreed, with its decision, using mcp__sticky-board__design; then take the next unsettled point.',
+    ].join('\n')
+    const namedDiscussing = [
+      "Entries on the user's sticky board that this message names:",
+      '- D2: the design point "Choose cache" (discussing)',
+    ].join('\n')
+
+    const open = await $.prompt.submit({
+      text: 'Continue with d2, not AD1 or D20.',
+      context: ['existing context'],
+      wait: false,
+      origin: { kind: 'composer' },
+    })
+    expect(open).toStrictEqual({
+      text: 'Continue with d2, not AD1 or D20.',
+      context: ['existing context', designContext, namedDiscussing],
+    })
+
+    await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [
+        {
+          topic: 'Choose database',
+          state: 'settled',
+          decision: 'Use SQLite.',
+        },
+        {
+          topic: 'Choose cache',
+          state: 'settled',
+          decision: 'Use an in-memory LRU.',
+        },
+        {
+          topic: 'Choose retries',
+          state: 'settled',
+          decision: 'Retry twice.',
+        },
+      ],
+    })
+
+    const settledNamed = await $.prompt.submit({
+      text: 'Compare D1 and d3; XD2 is not a label.',
+      wait: false,
+      origin: { kind: 'composer' },
+    })
+    expect(settledNamed).toStrictEqual({
+      text: 'Compare D1 and d3; XD2 is not a label.',
+      context: [
+        [
+          "Entries on the user's sticky board that this message names:",
+          '- D1: the design point "Choose database" (settled), decided: Use SQLite.',
+          '- D3: the design point "Choose retries" (settled), decided: Retry twice.',
+        ].join('\n'),
+      ],
+    })
+
+    const allSettled = await $.prompt.submit({
+      text: 'Continue without naming a point.',
+      context: ['keep'],
+      wait: false,
+      origin: { kind: 'composer' },
+    })
+    expect(allSettled).toStrictEqual({
+      text: 'Continue without naming a point.',
+      context: ['keep'],
+    })
+
+    await $.tool.call({ tool: DESIGN_TOOL, points: [] })
+
+    const none = await $.prompt.submit({
+      text: 'There are no points now.',
+      wait: false,
+      origin: { kind: 'composer' },
+    })
+    expect(none).toStrictEqual({
+      text: 'There are no points now.',
+    })
+  },
+)
+
+test(
+  'prompt.compose keeps existing sections and appends the sticky-board session section when all five tools are available',
   async ($: any, on: any) => {
     const { controls } = setup(on)
     const base = [
@@ -2170,7 +2781,7 @@ test(
     for (const tool of BOARD_TOOLS) {
       expect(result.sections[2].text).toContain(tool)
     }
-    for (const label of ['T3', 'Q2', 'A1', 'P1']) {
+    for (const label of ['T3', 'Q2', 'A1', 'D2', 'P1']) {
       expect(result.sections[2].text).toContain(label)
     }
   },
@@ -2210,7 +2821,7 @@ test(
 )
 
 test(
-  'inline draws only populated boxes at shared widths while dock always draws all four',
+  'inline draws only populated pane boxes while dock always draws the three base boxes and optional design box',
   async ($: any, on: any) => {
     setup(on)
     await clearBoard($)
@@ -2227,7 +2838,8 @@ test(
     expect(textOf(boxes[0])).toContain('No tasks yet.')
     expect(textOf(tree)).not.toContain('No open questions.')
     expect(textOf(tree)).not.toContain('No answered questions yet.')
-    expect(textOf(tree)).not.toContain('No pull requests in progress.')
+    expect(textOf(tree)).not.toContain('Design points')
+    expect(textOf(tree)).not.toContain('Pull requests')
 
     await emptyInline.unmount()
 
@@ -2237,9 +2849,8 @@ test(
 
     expect(tree.type).toBe('Box')
     expect(tree.props.flexDirection).toBe('column')
-    expect(boxes).toHaveLength(4)
+    expect(boxes).toHaveLength(3)
     expect(boxes.map(box => box.props.width)).toStrictEqual([
-      81,
       81,
       81,
       81,
@@ -2247,7 +2858,8 @@ test(
     expect(textOf(boxes[0])).toContain('No tasks yet.')
     expect(textOf(boxes[1])).toContain('No open questions.')
     expect(textOf(boxes[2])).toContain('No answered questions yet.')
-    expect(textOf(boxes[3])).toContain('No pull requests in progress.')
+    expect(textOf(tree)).not.toContain('Design points')
+    expect(textOf(tree)).not.toContain('Pull requests')
 
     await emptyDock.unmount()
 
@@ -2272,6 +2884,7 @@ test(
     expect(textOf(boxes[1])).toContain('Answered')
     expect(textOf(boxes[1])).toContain('A1 Inline answered question?')
     expect(textOf(tree)).not.toContain('Open questions')
+    expect(textOf(tree)).not.toContain('Design points')
     expect(textOf(tree)).not.toContain('Pull requests')
 
     await partialInline.unmount()
@@ -2288,6 +2901,25 @@ test(
       ok: true,
     })
 
+    const threeInline = await $.ui.mount(PANE('inline', 83, 30))
+    tree = await threeInline.drawn()
+    boxes = borderedBoxes(tree)
+
+    expect(boxes).toHaveLength(3)
+    expect(boxes.map(box => box.props.width)).toStrictEqual([27, 27, 27])
+    expect(textOf(boxes[0])).toContain('Tasks')
+    expect(textOf(boxes[1])).toContain('Open questions')
+    expect(textOf(boxes[2])).toContain('Answered')
+    expect(textOf(tree)).not.toContain('Inline PR')
+    expect(textOf(tree)).not.toContain('Pull requests')
+
+    await threeInline.unmount()
+
+    await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [{ topic: 'Inline design point', state: 'unsettled' }],
+    })
+
     const fullInline = await $.ui.mount(PANE('inline', 83, 30))
     tree = await fullInline.drawn()
     boxes = borderedBoxes(tree)
@@ -2302,9 +2934,13 @@ test(
 
     for (let index = 0; index < 4; index += 1) {
       expect(textOf(boxes[index])).toContain(
-        ['Tasks', 'Open questions', 'Answered', 'Pull requests'][index],
+        ['Tasks', 'Open questions', 'Answered', 'Design points'][index],
       )
     }
+    expect(textOf(tree)).not.toContain('Inline PR')
+    expect(textOf(tree)).not.toContain('Pull requests')
+    expect(await fullInline.find({ key: 'prs-up' })).toBeUndefined()
+    expect(await fullInline.find({ key: 'prs-down' })).toBeUndefined()
 
     await fullInline.unmount()
   },
@@ -2361,7 +2997,7 @@ test(
 )
 
 test(
-  'paging buttons move only their own one of the four boxes',
+  'paging buttons move only their own one of the four pane boxes and no PR buttons exist',
   async ($: any, on: any) => {
     setup(on)
     await clearBoard($)
@@ -2375,6 +3011,8 @@ test(
       expect(await ui.find({ key: `${name}-down` })).toBeDefined()
       expect(await ui.find({ key: `${name}-up` })).toBeUndefined()
     }
+    expect(await ui.find({ key: 'prs-up' })).toBeUndefined()
+    expect(await ui.find({ key: 'prs-down' })).toBeUndefined()
 
     for (const name of BOX_NAMES) {
       await ui.press({ key: `${name}-down` })
@@ -2399,7 +3037,7 @@ test(
 )
 
 test(
-  'ui.scroll moves only the pointed box and moves all four boxes without a pointer',
+  'ui.scroll moves only the pointed pane box and moves all four pane boxes without a pointer',
   async ($: any, on: any) => {
     setup(on)
     await clearBoard($)
@@ -2414,7 +3052,7 @@ test(
           tasks: { column: 2, row: 2 },
           questions: { column: 22, row: 2 },
           answers: { column: 42, row: 2 },
-          prs: { column: 62, row: 2 },
+          design: { column: 62, row: 2 },
         },
       },
       {
@@ -2425,7 +3063,7 @@ test(
           tasks: { column: 2, row: 2 },
           questions: { column: 2, row: 10 },
           answers: { column: 2, row: 18 },
-          prs: { column: 2, row: 26 },
+          design: { column: 2, row: 26 },
         },
       },
     ]
@@ -2468,6 +3106,8 @@ test(
       for (const name of BOX_NAMES) {
         expect(await ui.find({ key: `${name}-up` })).toBeDefined()
       }
+      expect(await ui.find({ key: 'prs-up' })).toBeUndefined()
+      expect(await ui.find({ key: 'prs-down' })).toBeUndefined()
 
       await ui.unmount()
     }
@@ -2475,7 +3115,124 @@ test(
 )
 
 test(
-  'a dock under 16 rows draws every box whole and passes scrolling through, while 16 rows scrolls boxes',
+  'the first up button and wheel-up move rows after a far-scrolled list is replaced by a short list',
+  async ($: any, on: any) => {
+    setup(on)
+    await clearBoard($)
+
+    const tallTasks = (prefix: string) =>
+      Array.from({ length: 12 }, (_, index) => ({
+        subject: `${prefix} ${String(index + 1).padStart(2, '0')}`,
+        status: 'pending',
+      }))
+    const shortTasks = (prefix: string) =>
+      Array.from({ length: 4 }, (_, index) => ({
+        subject: `${prefix} ${String(index + 1).padStart(2, '0')}`,
+        status: 'pending',
+      }))
+
+    await $.tool.call({
+      tool: TASKS_TOOL,
+      tasks: tallTasks('Tall button item'),
+    })
+
+    const bodyRows = 6
+    const ui = await $.ui.mount(PANE('inline', 80, bodyRows))
+    await scrollBoard($, 1000, bodyRows)
+
+    await $.tool.call({
+      tool: TASKS_TOOL,
+      tasks: shortTasks('Short button item'),
+    })
+
+    let before = boxRows(await ui.drawn(), 0)
+    expect(before.join('\n')).toContain('Short button item 03')
+    expect(await ui.find({ key: 'tasks-up' })).toBeDefined()
+
+    await ui.press({ key: 'tasks-up' })
+
+    let after = boxRows(await ui.drawn(), 0)
+    expect(after).not.toStrictEqual(before)
+    expect(after.join('\n')).toContain('Short button item 02')
+
+    await $.tool.call({
+      tool: TASKS_TOOL,
+      tasks: tallTasks('Tall wheel item'),
+    })
+    await scrollBoard($, 1000, bodyRows)
+    await $.tool.call({
+      tool: TASKS_TOOL,
+      tasks: shortTasks('Short wheel item'),
+    })
+
+    before = boxRows(await ui.drawn(), 0)
+    expect(before.join('\n')).toContain('Short wheel item 03')
+
+    const moved = await scrollBoard(
+      $,
+      -1,
+      bodyRows,
+      { column: 2, row: 2 },
+    )
+    expect(moved).toStrictEqual({})
+
+    after = boxRows(await ui.drawn(), 0)
+    expect(after).not.toStrictEqual(before)
+    expect(after.join('\n')).toContain('Short wheel item 02')
+
+    await ui.unmount()
+  },
+)
+
+test(
+  'ui.scroll with a body height different from the last pane drawing passes through and moves no box',
+  async ($: any, on: any) => {
+    const receivedScrolls: any[] = []
+    on('ui.scroll', async (_$: any, e: any) => {
+      receivedScrolls.push(e)
+      return { deny: 'bottom ui.scroll received height change' }
+    })
+    setup(on)
+    await clearBoard($)
+
+    await $.tool.call({
+      tool: TASKS_TOOL,
+      tasks: Array.from({ length: 12 }, (_, index) => ({
+        subject: `Height item ${String(index + 1).padStart(2, '0')}`,
+        status: 'pending',
+      })),
+    })
+
+    const bodyRows = 6
+    const ui = await $.ui.mount(PANE('inline', 80, bodyRows))
+    await scrollBoard($, -1000, bodyRows)
+
+    const before = boxRows(await ui.drawn(), 0)
+    expect(await ui.find({ key: 'tasks-up' })).toBeUndefined()
+
+    const passed = await scrollBoard(
+      $,
+      2,
+      bodyRows + 1,
+      { column: 2, row: 2 },
+    )
+    expect(passed).toStrictEqual({
+      deny: 'bottom ui.scroll received height change',
+    })
+    expect(receivedScrolls).toHaveLength(1)
+    expect(receivedScrolls[0].bodyRows).toBe(bodyRows + 1)
+    expect(receivedScrolls[0].by).toBe(2)
+
+    const after = boxRows(await ui.drawn(), 0)
+    expect(after).toStrictEqual(before)
+    expect(await ui.find({ key: 'tasks-up' })).toBeUndefined()
+
+    await ui.unmount()
+  },
+)
+
+test(
+  'short-dock pass-through follows the three-box and four-box thresholds',
   async ($: any, on: any) => {
     const receivedScrolls: any[] = []
     on('ui.scroll', async (_$: any, e: any) => {
@@ -2486,85 +3243,163 @@ test(
     await clearBoard($)
     await populateTallBoard($)
 
-    const shortRows = 15
-    const short = await $.ui.mount(PANE('dock', 80, shortRows))
-    const shortTree = await short.drawn()
-    const shortDrawing = textOf(shortTree)
+    const shortFourRows = 15
+    const shortFour = await $.ui.mount(PANE('dock', 80, shortFourRows))
+    const shortFourTree = await shortFour.drawn()
+    const shortFourDrawing = textOf(shortFourTree)
 
-    expect(borderedBoxes(shortTree)).toHaveLength(4)
+    expect(borderedBoxes(shortFourTree)).toHaveLength(4)
     expect(
-      boxRows(shortTree, 0).filter(row => row.includes('Task item')),
+      boxRows(shortFourTree, 0).filter(row => row.includes('Task item')),
     ).toHaveLength(10)
     expect(
-      boxRows(shortTree, 1).filter(row => row.includes('Question item')),
+      boxRows(shortFourTree, 1).filter(row => row.includes('Question item')),
     ).toHaveLength(10)
     expect(
-      boxRows(shortTree, 2).filter(row =>
+      boxRows(shortFourTree, 2).filter(row =>
         row.includes('Answered question'),
       ),
     ).toHaveLength(6)
     expect(
-      boxRows(shortTree, 2).filter(row => row.includes('Answer item')),
+      boxRows(shortFourTree, 2).filter(row => row.includes('Answer item')),
     ).toHaveLength(6)
     expect(
-      boxRows(shortTree, 3).filter(row =>
-        row.includes('Pull request '),
+      boxRows(shortFourTree, 3).filter(row =>
+        /D\d+ Design point/.test(row),
       ),
-    ).toHaveLength(6)
-    expect(shortDrawing).toContain('T1 Task item 01')
-    expect(shortDrawing).toContain('T10 Task item 10')
-    expect(shortDrawing).toContain('Q1 Question item 01?')
-    expect(shortDrawing).toContain('Q10 Question item 10?')
-    expect(shortDrawing).toContain('A1 Answered question 01?')
-    expect(shortDrawing).toContain('A6 Answered question 06?')
-    expect(shortDrawing).toContain('P1 Pull request 01')
-    expect(shortDrawing).toContain('P6 Pull request 06')
+    ).toHaveLength(10)
+    expect(shortFourDrawing).toContain('T1 Task item 01')
+    expect(shortFourDrawing).toContain('T10 Task item 10')
+    expect(shortFourDrawing).toContain('Q1 Question item 01?')
+    expect(shortFourDrawing).toContain('Q10 Question item 10?')
+    expect(shortFourDrawing).toContain('A1 Answered question 01?')
+    expect(shortFourDrawing).toContain('A6 Answered question 06?')
+    expect(shortFourDrawing).toContain('D1 Design point 01')
+    expect(shortFourDrawing).toContain('D10 Design point 10')
+    expect(shortFourDrawing).not.toContain('Pull request')
 
     for (const name of BOX_NAMES) {
-      expect(await short.find({ key: `${name}-up` })).toBeUndefined()
-      expect(await short.find({ key: `${name}-down` })).toBeUndefined()
+      expect(await shortFour.find({ key: `${name}-up` })).toBeUndefined()
+      expect(await shortFour.find({ key: `${name}-down` })).toBeUndefined()
     }
+    expect(await shortFour.find({ key: 'prs-up' })).toBeUndefined()
+    expect(await shortFour.find({ key: 'prs-down' })).toBeUndefined()
 
-    const passedThrough = await scrollBoard(
+    const passedFour = await scrollBoard(
       $,
       2,
-      shortRows,
+      shortFourRows,
       { column: 2, row: 2 },
     )
-    expect(passedThrough).toStrictEqual({
+    expect(passedFour).toStrictEqual({
       deny: 'bottom ui.scroll received it',
     })
     expect(receivedScrolls).toHaveLength(1)
     expect(receivedScrolls[0].requestId).toBe('sticky-board')
-    expect(receivedScrolls[0].bodyRows).toBe(shortRows)
+    expect(receivedScrolls[0].bodyRows).toBe(shortFourRows)
     expect(receivedScrolls[0].by).toBe(2)
-    expect(textOf(await short.drawn())).toBe(shortDrawing)
+    expect(textOf(await shortFour.drawn())).toBe(shortFourDrawing)
 
-    await short.unmount()
+    await shortFour.unmount()
 
-    const boundaryRows = 16
-    const boundary = await $.ui.mount(PANE('dock', 80, boundaryRows))
-    const beforeTree = await boundary.drawn()
-    const tasksBefore = boxRows(beforeTree, 0)
-    const questionsBefore = boxRows(beforeTree, 1)
+    const boundaryFourRows = 16
+    const boundaryFour = await $.ui.mount(
+      PANE('dock', 80, boundaryFourRows),
+    )
+    const beforeFourTree = await boundaryFour.drawn()
+    const tasksBeforeFour = boxRows(beforeFourTree, 0)
+    const questionsBeforeFour = boxRows(beforeFourTree, 1)
 
-    expect(tasksBefore.join('\n')).toContain('T1 Task item 01')
-    const intercepted = await scrollBoard(
+    expect(tasksBeforeFour.join('\n')).toContain('T1 Task item 01')
+    const interceptedFour = await scrollBoard(
       $,
       2,
-      boundaryRows,
+      boundaryFourRows,
       { column: 2, row: 1 },
     )
 
-    expect(intercepted).toStrictEqual({})
+    expect(interceptedFour).toStrictEqual({})
     expect(receivedScrolls).toHaveLength(1)
 
-    const afterTree = await boundary.drawn()
-    const tasksAfter = boxRows(afterTree, 0)
-    expect(tasksAfter).not.toStrictEqual(tasksBefore)
-    expect(tasksAfter.join('\n')).toContain('T3 Task item 03')
-    expect(boxRows(afterTree, 1)).toStrictEqual(questionsBefore)
+    const afterFourTree = await boundaryFour.drawn()
+    const tasksAfterFour = boxRows(afterFourTree, 0)
+    expect(tasksAfterFour).not.toStrictEqual(tasksBeforeFour)
+    expect(tasksAfterFour.join('\n')).toContain('T3 Task item 03')
+    expect(boxRows(afterFourTree, 1)).toStrictEqual(questionsBeforeFour)
 
-    await boundary.unmount()
+    await scrollBoard($, -1000, boundaryFourRows)
+    await boundaryFour.unmount()
+
+    await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [],
+    })
+
+    const shortThreeRows = 11
+    const shortThree = await $.ui.mount(PANE('dock', 80, shortThreeRows))
+    const shortThreeTree = await shortThree.drawn()
+    const shortThreeDrawing = textOf(shortThreeTree)
+
+    expect(borderedBoxes(shortThreeTree)).toHaveLength(3)
+    expect(
+      boxRows(shortThreeTree, 0).filter(row => row.includes('Task item')),
+    ).toHaveLength(10)
+    expect(
+      boxRows(shortThreeTree, 1).filter(row => row.includes('Question item')),
+    ).toHaveLength(10)
+    expect(
+      boxRows(shortThreeTree, 2).filter(row =>
+        row.includes('Answered question'),
+      ),
+    ).toHaveLength(6)
+    expect(shortThreeDrawing).not.toContain('Design points')
+    expect(shortThreeDrawing).not.toContain('Pull request')
+
+    for (const name of ['tasks', 'questions', 'answers'] as const) {
+      expect(await shortThree.find({ key: `${name}-up` })).toBeUndefined()
+      expect(await shortThree.find({ key: `${name}-down` })).toBeUndefined()
+    }
+
+    const passedThree = await scrollBoard(
+      $,
+      2,
+      shortThreeRows,
+      { column: 2, row: 2 },
+    )
+    expect(passedThree).toStrictEqual({
+      deny: 'bottom ui.scroll received it',
+    })
+    expect(receivedScrolls).toHaveLength(2)
+    expect(receivedScrolls[1].bodyRows).toBe(shortThreeRows)
+    expect(textOf(await shortThree.drawn())).toBe(shortThreeDrawing)
+
+    await shortThree.unmount()
+
+    const boundaryThreeRows = 12
+    const boundaryThree = await $.ui.mount(
+      PANE('dock', 80, boundaryThreeRows),
+    )
+    const beforeThreeTree = await boundaryThree.drawn()
+    const tasksBeforeThree = boxRows(beforeThreeTree, 0)
+    const questionsBeforeThree = boxRows(beforeThreeTree, 1)
+
+    expect(tasksBeforeThree.join('\n')).toContain('T1 Task item 01')
+    const interceptedThree = await scrollBoard(
+      $,
+      2,
+      boundaryThreeRows,
+      { column: 2, row: 1 },
+    )
+
+    expect(interceptedThree).toStrictEqual({})
+    expect(receivedScrolls).toHaveLength(2)
+
+    const afterThreeTree = await boundaryThree.drawn()
+    const tasksAfterThree = boxRows(afterThreeTree, 0)
+    expect(tasksAfterThree).not.toStrictEqual(tasksBeforeThree)
+    expect(tasksAfterThree.join('\n')).toContain('T3 Task item 03')
+    expect(boxRows(afterThreeTree, 1)).toStrictEqual(questionsBeforeThree)
+
+    await boundaryThree.unmount()
   },
 )

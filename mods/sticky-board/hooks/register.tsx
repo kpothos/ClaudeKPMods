@@ -3,6 +3,9 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type {
   Answers,
+  DesignPoint,
+  DesignPoints,
+  DesignState,
   Offsets,
   PrStage,
   PullRequest,
@@ -31,6 +34,13 @@ const MARK_COLOR: Record<TaskStatus, string> = {
   completed: 'success',
 }
 
+const POINT_MARK: Record<DesignState, string> = { discussing: '◼', unsettled: '◻', settled: '✔' }
+const POINT_COLOR: Record<DesignState, string> = {
+  discussing: 'claude',
+  unsettled: 'inactive',
+  settled: 'success',
+}
+
 const STAGES: readonly PrStage[] = ['pre_pr', 'open', 'ci', 'deploy', 'live']
 const STAGE_LABEL: Record<PrStage, string> = {
   pre_pr: 'Pre-PR: running the test suites',
@@ -41,12 +51,13 @@ const STAGE_LABEL: Record<PrStage, string> = {
 }
 
 const RULE = `# Sticky board
-The user keeps a board on screen with four boxes: Tasks, Open questions, Answered and Pull requests. Keeping them right is your job:
+The user keeps a board on screen: Tasks, Open questions, Answered, Design points and Pull requests. Keeping them right is your job:
 - mcp__sticky-board__tasks: for any work of more than a couple of steps, put your task list on the board before you start, and send it again each time a task starts or finishes, so the board always shows where you are. If you also have TaskCreate and TaskUpdate, tasks made with those reach the board by themselves: use one or the other, never both for the same task.
 - mcp__sticky-board__questions: when your reply asks the user something you need answered, or leaves a decision to them, add each one, worded so that it makes sense on its own. When the user has answered one, or it no longer matters, resolve it by its id.
 - mcp__sticky-board__answered: when the user asks you a question and you answer it, record it just before you write your answer: their question in a few words and your answer in one or two plain sentences, so they can still see it after your reply has scrolled away. A request to do work is not a question to record.
 - mcp__sticky-board__prs: when you are taking a pull request through to release, report it each time it moves or its health changes: \`stage\` is pre_pr (running every test suite before opening it), open (the pull request is open), ci (CI is running on it), deploy (merged and deploying) or live; \`ok\` says whether everything is fine, and \`status\` says why in a few words. Keep the same \`name\` for it from start to finish.
-Every entry on the board carries a label the user can see: T3 for a task, Q2 for an open question, A1 for an answered one, P1 for a pull request. The user may name an entry by its label; what the label stands for then comes with their message.
+- mcp__sticky-board__design: when a plan has design points that are not settled yet, list them, in the plan's order, and send the whole list again each time one changes. Take them one at a time: mark the one you and the user are talking through as discussing, and keep the discussion to it. Mark a point settled only when the user has clearly agreed, and give the decision in a line or two; write the decision into the plan itself as well, since the board is cleared with the conversation. Then take the next unsettled point.
+Every entry on the board carries a label the user can see: T3 for a task, Q2 for an open question, A1 for an answered one, D2 for a design point, P1 for a pull request. The user may name an entry by its label; what the label stands for then comes with their message.
 Do not add rhetorical questions, and do not mention the board unless the user asks about it.`
 
 const TOOLS = [
@@ -54,6 +65,7 @@ const TOOLS = [
   'mcp__sticky-board__questions',
   'mcp__sticky-board__answered',
   'mcp__sticky-board__prs',
+  'mcp__sticky-board__design',
 ]
 
 // A subagent's own steps and asides are not the user's business: only the main conversation keeps the board.
@@ -77,14 +89,17 @@ const answers = atom({ plugin: 'sticky-board', key: 'answers' } as const, { seq:
 const prs = atom({ plugin: 'sticky-board', key: 'prs' } as const, { seq: 0, list: [] }, {
   shape: 'numbered',
 })
-const TOP: Offsets = { tasks: 0, questions: 0, answers: 0, prs: 0 }
+const design = atom({ plugin: 'sticky-board', key: 'design' } as const, { seq: 0, list: [] }, {
+  shape: 'numbered',
+})
+const TOP: Offsets = { tasks: 0, questions: 0, answers: 0, design: 0 }
 const offsets = atom({ plugin: 'sticky-board', key: 'scroll' } as const, TOP)
 // A session keeps its values across an update of the mod: offsets kept by a version with fewer
 // boxes lack the newer ones, which start at the top.
 const whole = (value: Offsets): Offsets => ({ ...TOP, ...value })
 
 // The boxes in the order they are drawn.
-const ORDER: readonly (keyof Offsets)[] = ['tasks', 'questions', 'answers', 'prs']
+const ORDER: readonly (keyof Offsets)[] = ['tasks', 'questions', 'answers', 'design']
 
 type BoxName = keyof Offsets
 
@@ -120,6 +135,39 @@ const isStatus = (value: unknown): value is TaskStatus =>
 
 const isStage = (value: unknown): value is PrStage =>
   typeof value === 'string' && Object.hasOwn(STAGE_LABEL, value)
+
+// The design points of a call, or nothing when any of them is unusable: a list taken in part
+// would drop points from the board without saying so.
+const sentPoints = (value: unknown): Pick<DesignPoint, 'topic' | 'state' | 'decision'>[] | undefined => {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+
+  const points = value.flatMap(
+    (one: { topic?: unknown; state?: unknown; decision?: unknown } | null) => {
+      if (one === null || typeof one !== 'object' || typeof one.topic !== 'string') {
+        return []
+      }
+
+      const topic = one.topic.trim()
+      const decision = typeof one.decision === 'string' ? one.decision.trim() : ''
+      const { state } = one
+
+      if (topic === '' || typeof state !== 'string' || !Object.hasOwn(POINT_MARK, state)) {
+        return []
+      }
+
+      // A decision belongs to a settled point alone, and a settled point has to have one.
+      return state === 'settled'
+        ? decision === ''
+          ? []
+          : [{ topic, state: 'settled' as const, decision }]
+        : [{ topic, state: state as DesignState, decision: '' }]
+    },
+  )
+
+  return points.length === value.length ? points : undefined
+}
 
 const sentTasks = (value: unknown): Pick<Task, 'subject' | 'status'>[] =>
   (Array.isArray(value) ? value : []).flatMap(
@@ -266,7 +314,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'sticky',
-      description: 'Show the sticky board: tasks, open questions, answers and pull requests',
+      description: 'Show the sticky board: tasks, open questions, answers and design points',
     })
     await $.tool.register({
       name: 'tasks',
@@ -336,6 +384,30 @@ export const register: Register = on => {
       },
       isDeferred: false,
     })
+    await $.tool.register({
+      name: 'design',
+      description:
+        "Sets the Design points box of the user's sticky board: the design points of the plan you are working out with the user. Send the whole list every time, in the plan's order, each point with its `topic` and its `state`: unsettled, discussing (the one you and the user are talking through now) or settled. A settled point needs its `decision`, in a line or two. A point you leave out is taken off the board.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          points: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                topic: { type: 'string' },
+                state: { type: 'string', enum: ['unsettled', 'discussing', 'settled'] },
+                decision: { type: 'string' },
+              },
+              required: ['topic', 'state'],
+            },
+          },
+        },
+        required: ['points'],
+      },
+      isDeferred: false,
+    })
     void $.ui.open({ id: 'sticky-board', title: 'Sticky board' }).then(opened => {
       if (!opened.isPlaced) {
         $.ui.toast('The sticky board is hidden in a narrow window. Type /sticky to show it.')
@@ -358,6 +430,7 @@ export const register: Register = on => {
       await update($, questions, () => ({ seq: 0, open: [] }))
       await update($, answers, () => ({ seq: 0, list: [] }))
       await update($, prs, () => ({ seq: 0, list: [] }))
+      await update($, design, () => ({ seq: 0, list: [] }))
       await update($, offsets, () => TOP)
     }
 
@@ -539,7 +612,8 @@ export const register: Register = on => {
       return { result: NOT_MAIN }
     }
 
-    const name = typeof e.name === 'string' ? e.name.trim() : ''
+    // On one line: a pull request is drawn as a single row, which a line break inside its name would split.
+    const name = typeof e.name === 'string' ? e.name.replace(/\s+/g, ' ').trim() : ''
 
     if (name === '') {
       return { result: 'Nothing was changed: a pull request needs a name.' }
@@ -563,7 +637,7 @@ export const register: Register = on => {
       }
     }
 
-    const status = typeof e.status === 'string' ? e.status.trim() : ''
+    const status = typeof e.status === 'string' ? e.status.replace(/\s+/g, ' ').trim() : ''
     const sent = typeof e.number === 'number' && Number.isInteger(e.number) && e.number > 0
     const at = await $.clock.now()
     const { list } = await update($, prs, ({ seq, list: kept }): PullRequests => {
@@ -587,6 +661,49 @@ export const register: Register = on => {
 
     return {
       result: `P${list.find(one => one.name === name)?.n} ${name}: stage ${STAGES.indexOf(stage) + 1} of ${STAGES.length} (${STAGE_LABEL[stage]}), ${isOk ? 'ok' : 'not ok'}.`,
+    }
+  })
+
+  on('tool.call', { tool: 'mcp__sticky-board__design' }, async ($, e) => {
+    if (e.agentId !== undefined) {
+      return { result: NOT_MAIN }
+    }
+
+    const sent = sentPoints(e.points)
+
+    if (sent === undefined) {
+      return {
+        result:
+          'Nothing was changed: every point needs a `topic` and a `state` of unsettled, discussing or settled, and a settled point needs its `decision`.',
+      }
+    }
+
+    const at = await $.clock.now()
+    const { list } = await update($, design, (value): DesignPoints => {
+      // Each old point lends its label and time to one new point only, as with the tasks.
+      const old = [...value.list]
+      let { seq } = value
+      const points = sent.map(({ topic, state, decision }): DesignPoint => {
+        const found = old.findIndex(one => one.topic === topic)
+        const [same] = found === -1 ? [] : old.splice(found, 1)
+        const n = same?.n ?? (seq += 1)
+
+        const isSame = same?.state === state && same.decision === decision
+
+        return { n, topic, state, decision, at: isSame ? same.at : at }
+      })
+
+      return { seq, list: points }
+    })
+
+    return {
+      result: [
+        `The board shows ${list.length} design ${list.length === 1 ? 'point' : 'points'}.`,
+        ...list.map(
+          one =>
+            `D${one.n} [${one.state}] ${one.topic}${one.state === 'settled' ? `: ${one.decision}` : ''}`,
+        ),
+      ].join('\n'),
     }
   })
 
@@ -631,8 +748,25 @@ export const register: Register = on => {
       )
     }
 
+    const { list: points } = await read($, design)
+
+    // While a point is still open the model gets the whole agenda with each reply, so a long
+    // discussion of one point cannot lose the others.
+    if (points.some(one => one.state !== 'settled')) {
+      notes.push(
+        [
+          "Design points on the user's sticky board:",
+          ...points.map(
+            one =>
+              `- D${one.n} [${one.state}] ${one.topic}${one.state === 'settled' ? `: ${one.decision}` : ''}`,
+          ),
+          'Keep the discussion to the point marked discussing. Mark a point settled only when the user has clearly agreed, with its decision, using mcp__sticky-board__design; then take the next unsettled point.',
+        ].join('\n'),
+      )
+    }
+
     // The other labels the person reads off the board: where their message names one, what it stands for goes with it.
-    const named = new Set((e.text.match(/\b[TAP]\d+\b/gi) ?? []).map(label => label.toUpperCase()))
+    const named = new Set((e.text.match(/\b[TAPD]\d+\b/gi) ?? []).map(label => label.toUpperCase()))
 
     if (named.size > 0) {
       const found = [
@@ -647,6 +781,12 @@ export const register: Register = on => {
           .map(
             one =>
               `- P${one.n}: the pull request "${one.name}"${one.number === undefined ? '' : ` #${one.number}`}, ${STAGE_LABEL[one.stage]}, ${one.isOk ? 'ok' : 'not ok'}${one.status === '' ? '' : `: ${one.status}`}`,
+          ),
+        ...points
+          .filter(one => named.has(`D${one.n}`))
+          .map(
+            one =>
+              `- D${one.n}: the design point "${one.topic}" (${one.state})${one.state === 'settled' ? `, decided: ${one.decision}` : ''}`,
           ),
       ]
 
@@ -717,7 +857,7 @@ export const register: Register = on => {
     const { list } = await read($, tasks)
     const { open } = await read($, questions)
     const { list: answered } = await read($, answers)
-    const { list: requests } = await read($, prs)
+    const { list: points } = await read($, design)
     const at = whole(await read($, offsets))
 
     // Side by side in the short block above the prompt, stacked in the tall dock beside the transcript.
@@ -726,11 +866,13 @@ export const register: Register = on => {
       tasks: list.length,
       questions: open.length,
       answers: answered.length,
-      prs: requests.length,
+      design: points.length,
     }
     // Side by side every box costs width, so there only the ones with something to show are drawn.
     const filled = ORDER.filter(name => counts[name] > 0)
-    const names = !isRow ? ORDER : filled.length > 0 ? filled : ORDER.slice(0, 1)
+    // Design points come and go with a plan: with none, their box is not drawn in the dock either.
+    const docked = ORDER.filter(name => name !== 'design' || counts.design > 0)
+    const names = !isRow ? docked : filled.length > 0 ? filled : ORDER.slice(0, 1)
     const boxColumns = isRow ? Math.floor(e.props.bodyColumns / names.length) : e.props.bodyColumns
     // 4: the border and the padding on each side.
     const textColumns = Math.max(1, boxColumns - 4 - LEAD)
@@ -828,33 +970,25 @@ export const register: Register = on => {
       ),
     ])
 
-    const requestLines = requests.flatMap(one => {
-      const place = STAGES.indexOf(one.stage) + 1
-      const strip = `${'■'.repeat(place)}${'□'.repeat(STAGES.length - place)}`
-      const title = `P${one.n} ${one.number === undefined ? one.name : `${one.name} #${one.number}`}`
-
-      return [
-        ...wrap(title, textColumns).map(
-          (text, index): Line => ({
-            lead: index === 0 ? clock(one.at) : '',
-            mark: index === 0 ? (one.isOk ? '✔' : '✖') : ' ',
-            color: one.isOk ? 'success' : 'error',
-            text,
-            isDim: false,
-            isBold: true,
-          }),
-        ),
-        ...wrap(`${strip} ${place}/${STAGES.length} ${STAGE_LABEL[one.stage]}`, textColumns).map(
-          (text): Line => ({ lead: '', mark: ' ', color: 'text', text, isDim: false, isBold: false }),
-        ),
-        ...(one.status === '' ? [] : wrap(one.status, textColumns)).map(
-          (text): Line => ({ lead: '', mark: ' ', color: 'text', text, isDim: true, isBold: false }),
-        ),
-      ]
-    })
+    // In the plan's order, not by state: the list is an agenda the person reads top to bottom.
+    const pointLines = points.flatMap(one => [
+      ...wrap(`D${one.n} ${one.topic}`, textColumns).map(
+        (text, index): Line => ({
+          lead: index === 0 ? clock(one.at) : '',
+          mark: index === 0 ? POINT_MARK[one.state] : ' ',
+          color: POINT_COLOR[one.state],
+          text,
+          isDim: false,
+          isBold: one.state === 'discussing',
+        }),
+      ),
+      ...(one.state === 'settled' ? wrap(`Decision: ${one.decision}`, textColumns) : []).map(
+        (text): Line => ({ lead: '', mark: ' ', color: 'text', text, isDim: false, isBold: false }),
+      ),
+    ])
 
     const doneCount = list.filter(task => task.status === 'completed').length
-    const notOkCount = requests.filter(one => !one.isOk).length
+    const settledCount = points.filter(one => one.state === 'settled').length
     const all: BoxSpec[] = [
       {
         name: 'tasks',
@@ -881,14 +1015,14 @@ export const register: Register = on => {
         lines: answerLines,
       },
       {
-        name: 'prs',
-        title: 'Pull requests',
+        name: 'design',
+        title: 'Design points',
         note:
-          requests.length === 0
-            ? ''
-            : `${requests.length} · ${notOkCount === 0 ? 'all ok' : `${notOkCount} not ok`}`,
-        empty: 'No pull requests in progress.',
-        lines: requestLines,
+          settledCount === points.length
+            ? `all ${points.length} settled`
+            : `${settledCount} settled, ${points.length - settledCount} to go`,
+        empty: 'No design points.',
+        lines: pointLines,
       },
     ]
     const boxes = all.filter(box => names.includes(box.name))
@@ -985,6 +1119,40 @@ export const register: Register = on => {
                   onPress={move(step)}
                 />
               )}
+            </Box>
+          )
+        })}
+      </Box>
+    )
+  })
+
+  // The pull requests go across the window, one row each, in the band above the prompt: a stage
+  // strip reads well on one long row, and the column beside the transcript keeps its rows.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const { list: requests } = await read($, prs)
+
+    if (e.props.hasSurvey || requests.length === 0) {
+      return next(e)
+    }
+
+    const { Box, Text } = $.ui.resolve(e)
+
+    return (
+      <Box flexDirection="column">
+        {requests.map(one => {
+          const place = STAGES.indexOf(one.stage) + 1
+          const strip = `${'■'.repeat(place)}${'□'.repeat(STAGES.length - place)}`
+          const title = one.number === undefined ? one.name : `${one.name} #${one.number}`
+          const status = one.status === '' ? '' : ` · ${one.status}`
+
+          return (
+            <Box>
+              <Text dimColor>{clock(one.at)} </Text>
+              <Text color={one.isOk ? 'success' : 'error'}>{one.isOk ? '✔' : '✖'}</Text>
+              <Text wrap="truncate-end">
+                {' '}
+                {`P${one.n} ${title} · ${strip} ${place}/${STAGES.length} ${STAGE_LABEL[one.stage]}${status}`}
+              </Text>
             </Box>
           )
         })}

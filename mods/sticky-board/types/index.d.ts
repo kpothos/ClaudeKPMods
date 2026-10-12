@@ -29,7 +29,21 @@ export type PullRequest = {
 
 export type PullRequests = { seq: number; list: PullRequest[] }
 
-export type Offsets = { tasks: number; questions: number; answers: number; prs: number }
+export type DesignState = 'unsettled' | 'discussing' | 'settled'
+
+// `decision` is empty until the point is settled.
+export type DesignPoint = {
+  n: number
+  topic: string
+  state: DesignState
+  decision: string
+  at: number
+}
+
+export type DesignPoints = { seq: number; list: DesignPoint[] }
+
+// The pull requests are drawn in the band above the prompt, which the engine scrolls.
+export type Offsets = { tasks: number; questions: number; answers: number; design: number }
 
 declare module 'claude-code' {
   interface PluginState {
@@ -38,6 +52,7 @@ declare module 'claude-code' {
       questions: Questions
       answers: Shaped<Answers>
       prs: Shaped<PullRequests>
+      design: Shaped<DesignPoints>
       scroll: Offsets
     }
   }

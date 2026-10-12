@@ -16,8 +16,12 @@ ClaudeKPMods/
 
 ## sticky-board
 
-A pinned panel with four boxes. Each box has its own scrolling list, and every entry shows the
-time it last changed.
+A pinned board of what is going on in the session. Every entry shows the time it last changed and
+carries a label (`T3`, `Q2`, `A1`, `D2`, `P1`) that stays with it and is never reused, so you can
+name an entry in a prompt ("do T3 next", "reopen D1"). When a prompt names a label, the mod hands
+Claude what it stands for.
+
+In the panel, each box with its own scrolling list:
 
 - **Tasks.** Claude keeps its task list here with a tool the mod adds. Tasks made with the
   built-in task tools, in sessions that have them, show up too.
@@ -26,22 +30,32 @@ time it last changed.
   on a question without adding it, the mod adds it. Press the `○` beside a question to take it off
   yourself.
 - **Answered.** The questions you asked, each with a short version of Claude's answer, so the
-  answer stays in view after the full reply has scrolled away. Press the `↑` beside one to scroll
-  the conversation back to the full answer (fullscreen mode). The newest 30 are kept.
-- **Pull requests.** Each pull request Claude is taking through to release, with the stage it is
-  at (pre-PR tests, PR open, CI tests, merge and deploy, live), a `✔` or `✖` for whether
-  everything is fine, and a few words on why. Claude reports these as it goes; the mod does not
-  check GitHub itself.
+  answer stays in view after the full reply has scrolled away. Press `○` to check an entry off, or
+  the `↑` beside the answer to scroll the conversation back to the full one (fullscreen mode). The
+  newest 30 are kept.
+- **Design points.** The points of a plan that still need deciding, in the plan's order: not
+  settled yet, being discussed, or settled with the decision in a line or two. Claude takes them
+  one at a time and marks one settled only when you have agreed. The box is drawn only while there
+  are design points. The board is cleared with the conversation, so Claude also writes each
+  decision into the plan itself.
 
-Where it sits: beside the conversation in fullscreen mode from 110 columns, above the prompt
+Across the window, in the strip above the prompt:
+
+- **Pull requests.** One row for each pull request Claude is taking through to release: the stage
+  it is at (pre-PR tests, PR open, CI tests, merge and deploy, live), a `✔` or `✖` for whether
+  everything is fine, and a few words on why. Claude reports these as it goes; the mod does not
+  check GitHub itself. The strip is drawn only while there are pull requests.
+
+Where the panel sits: beside the conversation in fullscreen mode from 110 columns, above the prompt
 otherwise. It opens by itself in a wide window (144 columns, or 110 once you have opened it
 yourself); `/sticky` opens it at any width. Above the prompt the boxes sit side by side, so only
 the ones with something in them are drawn.
 
 Scrolling: the mouse wheel scrolls the box under the pointer. A box with more than fits shows
 `▲ n more lines` and `▼ n more lines`, which you can click, or reach with ctrl+x tab, Tab and Enter.
+A panel too short to give every box a row scrolls as one.
 
-`/clear` empties the board.
+`/clear` empties the board and starts the labels again from 1.
 
 ## Using a mod
 
