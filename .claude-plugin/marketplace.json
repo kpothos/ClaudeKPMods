@@ -1,0 +1,13 @@
+{
+  "name": "claude-mods",
+  "description": "Mods for Claude Code kept in this folder.",
+  "owner": {
+    "name": "Kirk Pothos"
+  },
+  "plugins": [
+    {
+      "name": "sticky-board",
+      "source": "./mods/sticky-board"
+    }
+  ]
+}

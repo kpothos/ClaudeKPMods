@@ -1,0 +1,7 @@
+{
+  "name": "sticky-board",
+  "version": "0.1.0",
+  "description": "A pinned board of tasks and open questions, each in its own scrollable box.",
+  "author": { "name": "Kirk Pothos" },
+  "types": "./types/index.d.ts"
+}

@@ -1,0 +1,5 @@
+# Claude Code writes its API types beside a mod each time it loads one from this folder.
+mods/*/.claude-plugin/types/
+.DS_Store
+# Prompt and review files of a Codex run: working files, deleted once folded in.
+.codex-*.md
