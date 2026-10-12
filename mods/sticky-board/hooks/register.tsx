@@ -1,7 +1,17 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Offsets, PrStage, PullRequest, Questions, Task, TaskStatus } from '../types'
+import type {
+  Answers,
+  Offsets,
+  PrStage,
+  PullRequest,
+  PullRequests,
+  Questions,
+  Task,
+  Tasks,
+  TaskStatus,
+} from '../types'
 
 // Columns a row spends before its text: "16:21 ", the mark and a space.
 const LEAD = 8
@@ -36,6 +46,7 @@ The user keeps a board on screen with four boxes: Tasks, Open questions, Answere
 - mcp__sticky-board__questions: when your reply asks the user something you need answered, or leaves a decision to them, add each one, worded so that it makes sense on its own. When the user has answered one, or it no longer matters, resolve it by its id.
 - mcp__sticky-board__answered: when the user asks you a question and you answer it, record it just before you write your answer: their question in a few words and your answer in one or two plain sentences, so they can still see it after your reply has scrolled away. A request to do work is not a question to record.
 - mcp__sticky-board__prs: when you are taking a pull request through to release, report it each time it moves or its health changes: \`stage\` is pre_pr (running every test suite before opening it), open (the pull request is open), ci (CI is running on it), deploy (merged and deploying) or live; \`ok\` says whether everything is fine, and \`status\` says why in a few words. Keep the same \`name\` for it from start to finish.
+Every entry on the board carries a label the user can see: T3 for a task, Q2 for an open question, A1 for an answered one, P1 for a pull request. The user may name an entry by its label; what the label stands for then comes with their message.
 Do not add rhetorical questions, and do not mention the board unless the user asks about it.`
 
 const TOOLS = [
@@ -51,19 +62,26 @@ const NOT_MAIN = 'Only the main conversation keeps the sticky board; nothing was
 const OWN = 'board:'
 const BUILT_IN = 'task:'
 
-const tasks = atom({ plugin: 'sticky-board', key: 'tasks' } as const, [])
+// Kept under a tag: a session that kept these in an older form (plain lists, entries with no
+// label number) reads them as absent, and the board starts those boxes empty.
+const tasks = atom({ plugin: 'sticky-board', key: 'tasks' } as const, { seq: 0, list: [] }, {
+  shape: 'numbered',
+})
 const questions = atom({ plugin: 'sticky-board', key: 'questions' } as const, {
   seq: 0,
   open: [],
 })
-const answers = atom({ plugin: 'sticky-board', key: 'answers' } as const, [])
-const prs = atom({ plugin: 'sticky-board', key: 'prs' } as const, [])
-const offsets = atom({ plugin: 'sticky-board', key: 'scroll' } as const, {
-  tasks: 0,
-  questions: 0,
-  answers: 0,
-  prs: 0,
+const answers = atom({ plugin: 'sticky-board', key: 'answers' } as const, { seq: 0, list: [] }, {
+  shape: 'numbered',
 })
+const prs = atom({ plugin: 'sticky-board', key: 'prs' } as const, { seq: 0, list: [] }, {
+  shape: 'numbered',
+})
+const TOP: Offsets = { tasks: 0, questions: 0, answers: 0, prs: 0 }
+const offsets = atom({ plugin: 'sticky-board', key: 'scroll' } as const, TOP)
+// A session keeps its values across an update of the mod: offsets kept by a version with fewer
+// boxes lack the newer ones, which start at the top.
+const whole = (value: Offsets): Offsets => ({ ...TOP, ...value })
 
 // The boxes in the order they are drawn.
 const ORDER: readonly (keyof Offsets)[] = ['tasks', 'questions', 'answers', 'prs']
@@ -208,27 +226,41 @@ const addQuestions = async ($: EngineInterface, texts: readonly string[]) => {
 }
 
 // The questions a reply ends on: the sentences of its last paragraph that end with a question mark.
-const closingQuestions = (answer: string): string[] =>
-  (answer.trim().split(/\n\s*\n/).at(-1) ?? '')
-    .split('\n')
-    .flatMap(line =>
-      line
-        .replace(/^\s*(?:[-*+>]|\d+[.)])\s+/, '')
-        // A full stop inside "e.g." and the like does not end a sentence.
-        .split(/(?<=[.!?])(?<!\b(?:e\.g|i\.e|etc|vs)\.)\s+/),
-    )
-    .map(sentence => sentence.replace(/^[*_"'“”‘’\s]+|[*_"'“”‘’)\s]+$/g, ''))
-    .filter(sentence => sentence.endsWith('?'))
+const closingQuestions = (answer: string): string[] => {
+  const units: string[] = []
+
+  for (const line of (answer.trim().split(/\n\s*\n/).at(-1) ?? '').split('\n')) {
+    const item = line.replace(/^\s*(?:[-*+>]|\d+[.)])\s+/, '')
+
+    // A line with no list mark of its own carries on the sentence of the line before it.
+    if (item === line && units.length > 0) {
+      units[units.length - 1] += ` ${line.trim()}`
+    } else {
+      units.push(item)
+    }
+  }
+
+  return (
+    units
+      // A sentence ends at its mark, or at the quote or bracket closing it; the full stop inside
+      // "e.g." and the like ends nothing.
+      .flatMap(unit => unit.split(/(?<=[.!?]["'”’)]*)(?<!\b(?:e\.g|i\.e|etc|vs)\.)\s+/))
+      .map(sentence => sentence.replace(/^[*_"'“”‘’\s]+|[*_"'“”‘’)\s]+$/g, ''))
+      .filter(sentence => sentence.endsWith('?'))
+  )
+}
 
 export const register: Register = on => {
   // What the last drawing looked like, for the hook that scrolls it: a drawing may not write
   // $.state, and a scroll event carries neither the pane's width nor where its boxes sit.
-  let drawn: { isRow: boolean; names: BoxName[]; ends: number[]; max: Offsets } = {
-    isRow: false,
-    names: [],
-    ends: [],
-    max: { tasks: 0, questions: 0, answers: 0, prs: 0 },
-  }
+  let drawn: {
+    bodyRows: number
+    isRow: boolean
+    isWhole: boolean
+    names: BoxName[]
+    ends: number[]
+    max: Offsets
+  } = { bodyRows: 0, isRow: false, isWhole: false, names: [], ends: [], max: TOP }
   let seqAtTurnStart = -1
 
   on('session.start', async ($, e, next) => {
@@ -322,11 +354,11 @@ export const register: Register = on => {
   on('session.end', async ($, e, next) => {
     // The process goes on with another conversation, which the old one's board says nothing about.
     if (e.reason === 'clear' || e.reason === 'resume') {
-      await update($, tasks, () => [])
+      await update($, tasks, () => ({ seq: 0, list: [] }))
       await update($, questions, () => ({ seq: 0, open: [] }))
-      await update($, answers, () => [])
-      await update($, prs, () => [])
-      await update($, offsets, () => ({ tasks: 0, questions: 0, answers: 0, prs: 0 }))
+      await update($, answers, () => ({ seq: 0, list: [] }))
+      await update($, prs, () => ({ seq: 0, list: [] }))
+      await update($, offsets, () => TOP)
     }
 
     return next(e)
@@ -342,10 +374,14 @@ export const register: Register = on => {
     const id = `${BUILT_IN}${ran.result.task.id}`
     const { subject } = ran.result.task
     const at = await $.clock.now()
-    await update($, tasks, (list): Task[] => [
-      ...list.filter(task => task.id !== id),
-      { id, subject, status: 'pending', at },
-    ])
+    await update($, tasks, ({ seq, list }): Tasks => {
+      const n = list.find(task => task.id === id)?.n ?? seq + 1
+
+      return {
+        seq: Math.max(seq, n),
+        list: [...list.filter(task => task.id !== id), { id, n, subject, status: 'pending', at }],
+      }
+    })
 
     return ran
   })
@@ -359,11 +395,9 @@ export const register: Register = on => {
 
     const id = `${BUILT_IN}${e.taskId}`
     const at = await $.clock.now()
-    await update($, tasks, list => {
-      const rest = list.filter(task => task.id !== id)
-
+    await update($, tasks, ({ seq, list }): Tasks => {
       if (e.status === 'deleted') {
-        return rest
+        return { seq, list: list.filter(task => task.id !== id) }
       }
 
       // A task made before the board loaded is first heard of here, without its subject.
@@ -371,14 +405,15 @@ export const register: Register = on => {
       const status = e.status ?? old?.status ?? 'pending'
       const changed: Task = {
         id,
+        n: old?.n ?? seq + 1,
         subject: e.subject ?? old?.subject ?? `Task ${e.taskId}`,
         status,
         at: old !== undefined && old.status === status ? old.at : at,
       }
 
       return old === undefined
-        ? [...rest, changed]
-        : list.map(task => (task.id === id ? changed : task))
+        ? { seq: seq + 1, list: [...list, changed] }
+        : { seq, list: list.map(task => (task.id === id ? changed : task)) }
     })
 
     return ran
@@ -391,23 +426,29 @@ export const register: Register = on => {
 
     const sent = sentTasks(e.tasks)
     const at = await $.clock.now()
-    await update($, tasks, list => {
-      // Each old entry lends its time to one new entry only, so two tasks of one name keep their own.
-      const old = list.filter(task => task.id.startsWith(OWN))
+    const { list } = await update($, tasks, (value): Tasks => {
+      // Each old entry lends its label and time to one new entry only, so two tasks of one name keep their own.
+      const old = value.list.filter(task => task.id.startsWith(OWN))
+      let { seq } = value
+      const own = sent.map(({ subject, status }, index): Task => {
+        // By subject, not by place: a task added in the middle leaves the labels and times of the rest alone.
+        const found = old.findIndex(task => task.subject === subject)
+        const [same] = found === -1 ? [] : old.splice(found, 1)
+        const n = same?.n ?? (seq += 1)
 
-      return [
-        ...list.filter(task => !task.id.startsWith(OWN)),
-        ...sent.map(({ subject, status }, index) => {
-          // By subject, not by place: a task added in the middle leaves the times of the rest alone.
-          const found = old.findIndex(task => task.subject === subject)
-          const [same] = found === -1 ? [] : old.splice(found, 1)
+        return { id: `${OWN}${index}`, n, subject, status, at: same?.status === status ? same.at : at }
+      })
 
-          return { id: `${OWN}${index}`, subject, status, at: same?.status === status ? same.at : at }
-        }),
-      ]
+      return { seq, list: [...value.list.filter(task => !task.id.startsWith(OWN)), ...own] }
     })
+    const own = list.filter(task => task.id.startsWith(OWN))
 
-    return { result: `The board shows ${sent.length} ${sent.length === 1 ? 'task' : 'tasks'}.` }
+    return {
+      result: [
+        `The board shows ${own.length} ${own.length === 1 ? 'task' : 'tasks'}.`,
+        ...own.map(task => `T${task.n} [${task.status}] ${task.subject}`),
+      ].join('\n'),
+    }
   })
 
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
@@ -426,7 +467,8 @@ export const register: Register = on => {
     // Typed in place of a pick, the person's own words answer the one question that was asked.
     const isTyped = e.questions.length === 1 && (ran.result.response ?? '').trim() !== ''
     const answered = e.questions
-      .filter(one => isTyped || Boolean(picked[one.question]))
+      // A blank answer leaves the question open; a 0 picked on a number question does not.
+      .filter(one => isTyped || String(picked[one.question] ?? '').trim() !== '')
       .map(one => one.question.trim())
     await update($, questions, value => ({
       ...value,
@@ -442,17 +484,22 @@ export const register: Register = on => {
     }
 
     const add = strings(e.add)
-    const resolve = strings(e.resolve)
+    // The board shows Q2 where the id is q2: either spelling names the question.
+    const resolve = strings(e.resolve).map(id => id.trim().toLowerCase())
     const at = await $.clock.now()
     const { open } = await update($, questions, value =>
-      addTo({ ...value, open: value.open.filter(one => !resolve.includes(one.id)) }, add, at),
+      addTo(
+        { ...value, open: value.open.filter(one => !resolve.includes(one.id.toLowerCase())) },
+        add,
+        at,
+      ),
     )
 
     return {
       result:
         open.length === 0
           ? 'No open questions.'
-          : open.map(one => `${one.id}: ${one.text}`).join('\n'),
+          : open.map(one => `${one.id.toUpperCase()}: ${one.text}`).join('\n'),
     }
   })
 
@@ -471,13 +518,20 @@ export const register: Register = on => {
     const at = await $.clock.now()
     // The call's own row sits beside the full answer in the transcript: a press on the entry scrolls back to it.
     const rowId = e.tool_use_id
-    await update($, answers, list =>
-      [...list.filter(one => one.question !== question), { rowId, question, answer, at }].slice(
-        -KEPT_ANSWERS,
-      ),
-    )
+    const { list } = await update($, answers, (value): Answers => {
+      // Asked again, a question keeps its label and takes the new answer.
+      const n = value.list.find(one => one.question === question)?.n ?? value.seq + 1
 
-    return { result: 'Added to the Answered box.' }
+      return {
+        seq: Math.max(value.seq, n),
+        list: [
+          ...value.list.filter(one => one.question !== question),
+          { n, rowId, question, answer, at },
+        ].slice(-KEPT_ANSWERS),
+      }
+    })
+
+    return { result: `Added to the Answered box as A${list.at(-1)?.n}.` }
   })
 
   on('tool.call', { tool: 'mcp__sticky-board__prs' }, async ($, e) => {
@@ -492,7 +546,10 @@ export const register: Register = on => {
     }
 
     if (e.remove === true) {
-      await update($, prs, list => list.filter(one => one.name !== name))
+      await update($, prs, value => ({
+        ...value,
+        list: value.list.filter(one => one.name !== name),
+      }))
 
       return { result: `${name} is off the board.` }
     }
@@ -509,11 +566,12 @@ export const register: Register = on => {
     const status = typeof e.status === 'string' ? e.status.trim() : ''
     const sent = typeof e.number === 'number' && Number.isInteger(e.number) && e.number > 0
     const at = await $.clock.now()
-    await update($, prs, list => {
-      const old = list.find(one => one.name === name)
+    const { list } = await update($, prs, ({ seq, list: kept }): PullRequests => {
+      const old = kept.find(one => one.name === name)
       // A number, once known, stays with the pull request when a later report leaves it out.
       const number = sent ? Number(e.number) : old?.number
       const changed: PullRequest = {
+        n: old?.n ?? seq + 1,
         name,
         stage,
         isOk,
@@ -523,12 +581,12 @@ export const register: Register = on => {
       }
 
       return old === undefined
-        ? [changed, ...list].slice(0, KEPT_PRS)
-        : list.map(one => (one.name === name ? changed : one))
+        ? { seq: seq + 1, list: [changed, ...kept].slice(0, KEPT_PRS) }
+        : { seq, list: kept.map(one => (one.name === name ? changed : one)) }
     })
 
     return {
-      result: `${name}: stage ${STAGES.indexOf(stage) + 1} of ${STAGES.length} (${STAGE_LABEL[stage]}), ${isOk ? 'ok' : 'not ok'}.`,
+      result: `P${list.find(one => one.name === name)?.n} ${name}: stage ${STAGES.indexOf(stage) + 1} of ${STAGES.length} (${STAGE_LABEL[stage]}), ${isOk ? 'ok' : 'not ok'}.`,
     }
   })
 
@@ -549,25 +607,57 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
-    const { open } = await read($, questions)
     const isPerson =
       e.origin.kind === 'composer' ||
       e.origin.kind === 'bridge' ||
       e.origin.kind === 'sdk' ||
       e.origin.kind === 'slack-ping'
 
-    if (!isPerson || open.length === 0) {
+    if (!isPerson) {
       return next(e)
     }
 
-    // The model sees the open questions as the person replies, the moment it can tell which they answered.
-    const note = [
-      "Open questions on the user's sticky board:",
-      ...open.map(one => `- ${one.id}: ${one.text}`),
-      'If this message answers any of them, or one no longer matters, resolve it with mcp__sticky-board__questions.',
-    ].join('\n')
+    const notes: string[] = []
+    const { open } = await read($, questions)
 
-    return next({ ...e, context: [...(e.context ?? []), note] })
+    // The model sees the open questions as the person replies, the moment it can tell which they answered.
+    if (open.length > 0) {
+      notes.push(
+        [
+          "Open questions on the user's sticky board:",
+          ...open.map(one => `- ${one.id.toUpperCase()}: ${one.text}`),
+          'If this message answers any of them, or one no longer matters, resolve it with mcp__sticky-board__questions.',
+        ].join('\n'),
+      )
+    }
+
+    // The other labels the person reads off the board: where their message names one, what it stands for goes with it.
+    const named = new Set((e.text.match(/\b[TAP]\d+\b/gi) ?? []).map(label => label.toUpperCase()))
+
+    if (named.size > 0) {
+      const found = [
+        ...(await read($, tasks)).list
+          .filter(task => named.has(`T${task.n}`))
+          .map(task => `- T${task.n}: the task "${task.subject}" (${task.status})`),
+        ...(await read($, answers)).list
+          .filter(one => named.has(`A${one.n}`))
+          .map(one => `- A${one.n}: they asked "${one.question}" and your answer was "${one.answer}"`),
+        ...(await read($, prs)).list
+          .filter(one => named.has(`P${one.n}`))
+          .map(
+            one =>
+              `- P${one.n}: the pull request "${one.name}"${one.number === undefined ? '' : ` #${one.number}`}, ${STAGE_LABEL[one.stage]}, ${one.isOk ? 'ok' : 'not ok'}${one.status === '' ? '' : `: ${one.status}`}`,
+          ),
+      ]
+
+      if (found.length > 0) {
+        notes.push(
+          ["Entries on the user's sticky board that this message names:", ...found].join('\n'),
+        )
+      }
+    }
+
+    return notes.length === 0 ? next(e) : next({ ...e, context: [...(e.context ?? []), ...notes] })
   })
 
   on('turn.start', async ($, e, next) => {
@@ -587,17 +677,32 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('ui.scroll', { requestId: 'sticky-board' }, async ($, e) => {
+  on('ui.scroll', { requestId: 'sticky-board' }, async ($, e, next) => {
+    // A change of height alone draws nothing again, so the last drawing may be for another height:
+    // this move is the engine's, and the board is drawn again for the next one.
+    if (e.bodyRows !== drawn.bodyRows) {
+      $.ui.invalidate('ui.render')
+
+      return next(e)
+    }
+
+    // Drawn whole in a dock too short for them, the boxes scroll as the pane does: the engine's move.
+    if (drawn.isWhole) {
+      return next(e)
+    }
+
     const { pointer } = e
     const place = pointer === undefined ? -1 : drawn.isRow ? pointer.column : pointer.row
     // The wheel moves the box under it; the page keys, which point at nothing, move them all.
     const under = drawn.ends.findIndex(end => place < end)
     const aimed = pointer === undefined ? drawn.names : drawn.names.slice(under, under + 1)
-    await update($, offsets, at => {
+    await update($, offsets, value => {
+      const at = whole(value)
       const moved = { ...at }
 
       for (const name of under === -1 && pointer !== undefined ? drawn.names.slice(-1) : aimed) {
-        moved[name] = clamp(at[name] + e.by, 0, drawn.max[name])
+        // From where the box shows, not where it once stood: a list that got shorter leaves the kept offset past its end.
+        moved[name] = clamp(Math.min(at[name], drawn.max[name]) + e.by, 0, drawn.max[name])
       }
 
       return moved
@@ -609,11 +714,11 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: 'sticky-board' }, async ($, e) => {
     const { Box, Button, Text } = $.ui.resolve(e)
-    const list = await read($, tasks)
+    const { list } = await read($, tasks)
     const { open } = await read($, questions)
-    const answered = await read($, answers)
-    const requests = await read($, prs)
-    const at = await read($, offsets)
+    const { list: answered } = await read($, answers)
+    const { list: requests } = await read($, prs)
+    const at = whole(await read($, offsets))
 
     // Side by side in the short block above the prompt, stacked in the tall dock beside the transcript.
     const isRow = e.props.placement === 'inline'
@@ -633,7 +738,7 @@ export const register: Register = on => {
     const taskLines = [...list]
       .sort((a, b) => RANK[a.status] - RANK[b.status])
       .flatMap(task =>
-        wrap(task.subject, textColumns).map(
+        wrap(`T${task.n} ${task.subject}`, textColumns).map(
           (text, index): Line => ({
             lead: index === 0 ? clock(task.at) : '',
             mark: index === 0 ? MARK[task.status] : ' ',
@@ -646,7 +751,7 @@ export const register: Register = on => {
       )
     // Newest first, so a question just asked shows without scrolling.
     const questionLines = [...open].reverse().flatMap(question =>
-      wrap(question.text, textColumns).map(
+      wrap(`${question.id.toUpperCase()} ${question.text}`, textColumns).map(
         (text, index): Line => ({
           lead: index === 0 ? clock(question.at) : '',
           mark: ' ',
@@ -671,7 +776,7 @@ export const register: Register = on => {
       ),
     )
     const answerLines = [...answered].reverse().flatMap(one => [
-      ...wrap(one.question, textColumns).map(
+      ...wrap(`A${one.n} ${one.question}`, textColumns).map(
         (text, index): Line => ({
           lead: index === 0 ? clock(one.at) : '',
           mark: ' ',
@@ -679,6 +784,31 @@ export const register: Register = on => {
           text,
           isDim: false,
           isBold: true,
+          // Beside the question, the mark that checks the entry off, as in the Open questions box.
+          ...(index === 0
+            ? {
+                press: {
+                  key: `done-${one.rowId}`,
+                  label: '○',
+                  run: () =>
+                    update($, answers, value => ({
+                      ...value,
+                      list: value.list.filter(other => other.rowId !== one.rowId),
+                    })),
+                },
+              }
+            : {}),
+        }),
+      ),
+      ...wrap(one.answer, textColumns).map(
+        (text, index): Line => ({
+          lead: '',
+          mark: ' ',
+          color: 'text',
+          text,
+          isDim: false,
+          isBold: false,
+          // Beside the answer, the mark that scrolls the conversation back to the full one.
           ...(index === 0
             ? {
                 press: {
@@ -696,15 +826,12 @@ export const register: Register = on => {
             : {}),
         }),
       ),
-      ...wrap(one.answer, textColumns).map(
-        (text): Line => ({ lead: '', mark: ' ', color: 'text', text, isDim: false, isBold: false }),
-      ),
     ])
 
     const requestLines = requests.flatMap(one => {
       const place = STAGES.indexOf(one.stage) + 1
       const strip = `${'■'.repeat(place)}${'□'.repeat(STAGES.length - place)}`
-      const title = one.number === undefined ? one.name : `${one.name} #${one.number}`
+      const title = `P${one.n} ${one.number === undefined ? one.name : `${one.name} #${one.number}`}`
 
       return [
         ...wrap(title, textColumns).map(
@@ -749,7 +876,7 @@ export const register: Register = on => {
       {
         name: 'answers',
         title: 'Answered',
-        note: answered.length === 0 ? '' : `${answered.length} · press ↑ to scroll back`,
+        note: answered.length === 0 ? '' : `${answered.length} · ○ done · ↑ scroll back`,
         empty: 'No answered questions yet.',
         lines: answerLines,
       },
@@ -768,20 +895,27 @@ export const register: Register = on => {
 
     // An empty box still shows one row saying so.
     const needs = boxes.map(box => Math.max(box.lines.length, 1))
+    const total = e.props.scroll.bodyRows - boxes.length * CHROME
+    // A dock too short to give every box a row draws them whole, and the pane scrolls as one.
+    const isWhole = !isRow && total < boxes.length
     const rooms = isRow
       ? boxes.map(() => Math.max(1, Math.min(e.props.scroll.bodyRows, INLINE_ROWS) - CHROME))
-      : share(needs, e.props.scroll.bodyRows - boxes.length * CHROME)
+      : isWhole
+        ? needs
+        : share(needs, total)
     const windows = boxes.map((box, index) =>
-      windowOf(box.lines.length, rooms[index] ?? 1, at[box.name]),
+      windowOf(box.lines.length, rooms[index] ?? 1, isWhole ? 0 : at[box.name]),
     )
 
     let end = 0
-    const max: Offsets = { tasks: 0, questions: 0, answers: 0, prs: 0 }
+    const max = { ...TOP }
     boxes.forEach((box, index) => {
       max[box.name] = windows[index]?.max ?? 0
     })
     drawn = {
+      bodyRows: e.props.scroll.bodyRows,
       isRow,
+      isWhole,
       names: boxes.map(box => box.name),
       ends: windows.map(shown => (end += isRow ? boxColumns : CHROME + shown.rows)),
       max,
@@ -794,8 +928,8 @@ export const register: Register = on => {
           const step = Math.max(1, (rooms[index] ?? 1) - 2)
           const move = (by: number) => () =>
             update($, offsets, value => ({
-              ...value,
-              [box.name]: clamp(value[box.name] + by, 0, shown.max),
+              ...whole(value),
+              [box.name]: clamp(Math.min(whole(value)[box.name], shown.max) + by, 0, shown.max),
             }))
 
           return (
