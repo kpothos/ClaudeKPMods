@@ -130,6 +130,10 @@ Remove it again with `claude plugin uninstall sticky-board@claude-mods`.
 
 Open an issue on this repo. Pull requests from other people are turned off.
 
+## Licence
+
+MIT: free for anybody to use, copy and change. The full text is in [LICENSE](LICENSE).
+
 ## Working on a mod
 
 Each mod lives in its own folder under `mods/`.
