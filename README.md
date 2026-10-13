@@ -130,7 +130,7 @@ Remove it again with `claude plugin uninstall sticky-board@claude-mods`.
 
 Open an issue on this repo. Pull requests from other people are turned off.
 
-## Licence
+## License
 
 MIT: free for anybody to use, copy and change. The full text is in [LICENSE](LICENSE).
 
