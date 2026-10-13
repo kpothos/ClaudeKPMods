@@ -1919,7 +1919,7 @@ test(
 )
 
 test(
-  'pull-request updates keep label, order, and number while the newest ten names are retained',
+  'pull-request updates keep label, order, and number while the newest two names are retained',
   async ($: any, on: any) => {
     setup(on)
     await clearBoard($)
@@ -1961,7 +1961,7 @@ test(
     const band = await $.ui.mount(ABOVE_PROMPT(false))
     let tree = await band.drawn()
     let rows = abovePromptRows(tree)
-    let all = textOf(tree)
+    const all = textOf(tree)
     const bIndex = rows.findIndex(row => row.includes('PR B'))
     const aIndex = rows.findIndex(row => row.includes('PR A #41'))
 
@@ -1980,39 +1980,39 @@ test(
     expect(rows[aIndex]).toContain('Deploying.')
     expect(all).not.toContain('Opened.')
 
-    for (const letter of ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']) {
-      await $.tool.call({
-        tool: PRS_TOOL,
-        name: `PR ${letter}`,
-        stage: 'pre_pr',
-        ok: true,
-      })
-    }
+    const third = await $.tool.call({
+      tool: PRS_TOOL,
+      name: 'PR C',
+      stage: 'pre_pr',
+      ok: true,
+    })
+    expect(third).toStrictEqual({
+      result:
+        'P3 PR C: stage 1 of 5 (Pre-PR: running the test suites), ok.',
+    })
 
     tree = await band.drawn()
     rows = abovePromptRows(tree)
-    all = textOf(tree)
-    expect(rows).toHaveLength(10)
-    expect(rows[0]).toContain('P11 PR K')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toContain('P3 PR C')
+    expect(rows[1]).toContain('P2 PR B')
 
-    const expectedOrder = [
-      'PR K',
-      'PR J',
-      'PR I',
-      'PR H',
-      'PR G',
-      'PR F',
-      'PR E',
-      'PR D',
-      'PR C',
-      'PR B',
-    ]
-    for (let index = 1; index < expectedOrder.length; index += 1) {
-      expect(all.indexOf(expectedOrder[index - 1])).toBeLessThan(
-        all.indexOf(expectedOrder[index]),
-      )
-    }
-    expect(all).not.toContain('PR A')
+    const readded = await $.tool.call({
+      tool: PRS_TOOL,
+      name: 'PR A',
+      stage: 'live',
+      ok: true,
+      status: 'Released.',
+    })
+    expect(readded).toStrictEqual({
+      result: 'P4 PR A: stage 5 of 5 (Live), ok.',
+    })
+
+    tree = await band.drawn()
+    rows = abovePromptRows(tree)
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toContain('P4 PR A')
+    expect(rows[1]).toContain('P3 PR C')
 
     await band.unmount()
   },
@@ -2079,58 +2079,51 @@ test(
           one.ok ? 'ok' : 'not ok'
         }.`,
       })
-    }
 
-    const band = await $.ui.mount(ABOVE_PROMPT(false))
-    let tree = await band.drawn()
-    let rows = abovePromptRows(tree)
-    let all = textOf(tree)
-
-    expect(rows).toHaveLength(5)
-    expect(all.indexOf('Live release')).toBeLessThan(
-      all.indexOf('Prep release'),
-    )
-
-    for (let index = 0; index < stages.length; index += 1) {
-      const one = stages[index]
+      const band = await $.ui.mount(ABOVE_PROMPT(false))
+      const tree = await band.drawn()
+      const rows = abovePromptRows(tree)
       const place = index + 1
       const strip = `${'■'.repeat(place)}${'□'.repeat(5 - place)}`
       const shownName =
         'number' in one ? `${one.name} #${one.number}` : one.name
-      const row = rows.find(candidate => candidate.includes(shownName))
+      const row = rows[0]
 
-      expect(row).toBeDefined()
+      expect(rows).toHaveLength(Math.min(index + 1, 2))
       expect(row).toContain(timeAt(BASE_TIME))
       expect(row).toContain(`P${place} ${shownName}`)
       expect(row).toContain(one.ok ? '✔' : '✖')
       expect(row).toContain(`${strip} ${place}/5 ${one.label}`)
       expect(row).toContain(one.status)
+
+      if (one.stage === 'ci') {
+        const recovered = await $.tool.call({
+          tool: PRS_TOOL,
+          name: 'CI release',
+          stage: 'ci',
+          ok: true,
+          status: 'Tests recovered.',
+        })
+        expect(recovered).toStrictEqual({
+          result:
+            'P3 CI release: stage 3 of 5 (CI tests running), ok.',
+        })
+
+        const recoveredTree = await band.drawn()
+        const recoveredRows = abovePromptRows(recoveredTree)
+        const recoveredRow = recoveredRows[0]
+
+        expect(recoveredRows).toHaveLength(2)
+        expect(recoveredRow).toContain('P3 CI release')
+        expect(recoveredRow).toContain('✔')
+        expect(recoveredRow).toContain('Tests recovered.')
+        expect(textOf(recoveredTree)).not.toContain(
+          'One test is failing.',
+        )
+      }
+
+      await band.unmount()
     }
-
-    const recovered = await $.tool.call({
-      tool: PRS_TOOL,
-      name: 'CI release',
-      stage: 'ci',
-      ok: true,
-      status: 'Tests recovered.',
-    })
-    expect(recovered).toStrictEqual({
-      result:
-        'P3 CI release: stage 3 of 5 (CI tests running), ok.',
-    })
-
-    tree = await band.drawn()
-    rows = abovePromptRows(tree)
-    all = textOf(tree)
-    const recoveredRow = rows.find(row => row.includes('CI release'))
-
-    expect(recoveredRow).toBeDefined()
-    expect(recoveredRow).toContain('P3 CI release')
-    expect(recoveredRow).toContain('✔')
-    expect(recoveredRow).toContain('Tests recovered.')
-    expect(all).not.toContain('One test is failing.')
-
-    await band.unmount()
   },
 )
 
@@ -2208,7 +2201,7 @@ test(
         ok: true,
         status: 'Still running 01.',
       })
-      expect(prResult.result).toContain('P1 Pull request 01:')
+      expect(prResult.result).toContain('P7 Pull request 01:')
 
       const resetTree = await ui.drawn()
       for (let index = 0; index < BOX_NAMES.length; index += 1) {

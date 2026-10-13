@@ -85,7 +85,8 @@ Across the window, in the strip above the prompt:
 - **Pull requests.** One row for each pull request Claude is taking through to release: the stage
   it is at (pre-PR tests, PR open, CI tests, merge and deploy, live), a `✔` or `✖` for whether
   everything is fine, and a few words on why. Claude reports these as it goes; the mod does not
-  check GitHub itself. The strip is drawn only while there are pull requests.
+  check GitHub itself. The newest 2 are kept. The strip is drawn only while there are pull
+  requests.
 
 Where the panel sits: beside the conversation in fullscreen mode from 110 columns, above the prompt
 otherwise. It opens by itself in a wide window (144 columns, or 110 once you have opened it

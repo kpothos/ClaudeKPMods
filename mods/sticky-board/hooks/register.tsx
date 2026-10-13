@@ -24,7 +24,8 @@ const CHROME = 3
 const INLINE_ROWS = 10
 // How many answered questions the board keeps: the oldest leave first.
 const KEPT_ANSWERS = 30
-const KEPT_PRS = 10
+// And how many pull requests: each is a row above the prompt, so the strip stays two rows at most.
+const KEPT_PRS = 2
 
 const RANK: Record<TaskStatus, number> = { in_progress: 0, pending: 1, completed: 2 }
 const MARK: Record<TaskStatus, string> = { in_progress: '◼', pending: '◻', completed: '✔' }
