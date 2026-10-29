@@ -6,7 +6,14 @@ export type Task = { id: string; n: number; subject: string; status: TaskStatus;
 
 export type Tasks = { seq: number; list: Task[] }
 
-export type Question = { id: string; text: string; at: number }
+// `blocked` marks an action auto mode refused, which the person approves in /permissions; `key`
+// tells that action apart from others of its tool, as the engine's own list of refusals does.
+export type Question = {
+  id: string
+  text: string
+  at: number
+  blocked?: { tool: string; key: string }
+}
 
 export type Questions = { seq: number; open: Question[] }
 

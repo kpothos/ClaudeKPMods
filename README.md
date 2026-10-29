@@ -73,7 +73,9 @@ In the panel, each box with its own scrolling list:
 - **Open questions.** Claude adds the questions it leaves for you and takes them off once you
   answer. A question you dismiss in a question dialog stays on the board. If Claude ends a reply
   on a question without adding it, the mod adds it. Press the `○` beside a question to take it off
-  yourself.
+  yourself. When auto mode blocks something Claude tried to do, it shows up here too, so you know
+  to approve it in `/permissions` (under Recently denied). It comes off by itself once that action
+  goes through, or press its `○`.
 - **Answered.** The questions you asked, each with a short version of Claude's answer, so the
   answer stays in view after the full reply has scrolled away. Press `○` to check an entry off, or
   the `↑` beside the answer to scroll the conversation back to the full one (fullscreen mode). The

@@ -10,6 +10,7 @@ import type {
   PrStage,
   PullRequest,
   PullRequests,
+  Question,
   Questions,
   Task,
   Tasks,
@@ -26,6 +27,8 @@ const INLINE_ROWS = 10
 const KEPT_ANSWERS = 30
 // And how many pull requests: each is a row above the prompt, so the strip stays two rows at most.
 const KEPT_PRS = 2
+// How much of a refused action the board shows: /permissions has the whole of it.
+const SHOWN_ACTION = 80
 
 const RANK: Record<TaskStatus, number> = { in_progress: 0, pending: 1, completed: 2 }
 const MARK: Record<TaskStatus, string> = { in_progress: '◼', pending: '◻', completed: '✔' }
@@ -54,7 +57,7 @@ const STAGE_LABEL: Record<PrStage, string> = {
 const RULE = `# Sticky board
 The user keeps a board on screen: Tasks, Open questions, Answered, Design points and Pull requests. Keeping them right is your job:
 - mcp__sticky-board__tasks: for any work of more than a couple of steps, put your task list on the board before you start, and send it again each time a task starts or finishes, so the board always shows where you are. If you also have TaskCreate and TaskUpdate, tasks made with those reach the board by themselves: use one or the other, never both for the same task.
-- mcp__sticky-board__questions: when your reply asks the user something you need answered, or leaves a decision to them, add each one, worded so that it makes sense on its own. When the user has answered one, or it no longer matters, resolve it by its id.
+- mcp__sticky-board__questions: when your reply asks the user something you need answered, or leaves a decision to them, add each one, worded so that it makes sense on its own. When the user has answered one, or it no longer matters, resolve it by its id. When auto mode blocks one of your actions, the board shows it to the user by itself: do not add a question for it.
 - mcp__sticky-board__answered: when the user asks you a question and you answer it, record it just before you write your answer: their question in a few words and your answer in one or two plain sentences, so they can still see it after your reply has scrolled away. A request to do work is not a question to record.
 - mcp__sticky-board__prs: when you are taking a pull request through to release, report it each time it moves or its health changes: \`stage\` is pre_pr (running every test suite before opening it), open (the pull request is open), ci (CI is running on it), deploy (merged and deploying) or live; \`ok\` says whether everything is fine, and \`status\` says why in a few words. Keep the same \`name\` for it from start to finish.
 - mcp__sticky-board__design: when a plan has design points that are not settled yet, list them, in the plan's order, and send the whole list again each time one changes. Take them one at a time: mark the one you and the user are talking through as discussing, and keep the discussion to it. Mark a point settled only when the user has clearly agreed, and give the decision in a line or two; write the decision into the plan itself as well, since the board is cleared with the conversation. Then take the next unsettled point.
@@ -259,7 +262,8 @@ const addTo = (value: Questions, texts: readonly string[], at: number): Question
   for (const raw of texts) {
     const text = raw.trim()
 
-    if (text !== '' && !open.some(one => one.text === text)) {
+    // A refused action worded the same is not this question: it leaves the board on its own terms.
+    if (text !== '' && !open.some(one => one.blocked === undefined && one.text === text)) {
       seq += 1
       open.push({ id: `q${seq}`, text, at })
     }
@@ -299,6 +303,52 @@ const closingQuestions = (answer: string): string[] => {
   )
 }
 
+// The tools whose calls the engine tells apart by their command alone.
+const SHELLS: readonly string[] = ['Bash', 'PowerShell']
+
+// Which action a call is, as the engine's own list of auto mode's refusals tells them apart: a
+// shell command by its text alone (the model words its description afresh each try), any other
+// call by its whole input.
+const actionKey = (tool: string, input: unknown): string => {
+  const { command } = (input ?? {}) as { command?: unknown }
+
+  return SHELLS.includes(tool) && typeof command === 'string'
+    ? command
+    : JSON.stringify(input ?? null)
+}
+
+// What the person reads of a refused action: its command, file or address, on one short line.
+const shownAction = (tool: string, input: unknown): string => {
+  const { command, file_path: file, url } = (input ?? {}) as Record<string, unknown>
+  const shown = [command, file, url].find(
+    (one): one is string => typeof one === 'string' && one.trim() !== '',
+  )
+
+  if (shown === undefined) {
+    return tool
+  }
+
+  // By character, as in wrap: a cut through an emoji leaves two broken halves.
+  const chars = Array.from(shown.replace(/\s+/g, ' ').trim())
+
+  return `${tool}(${chars.length > SHOWN_ACTION ? `${chars.slice(0, SHOWN_ACTION - 1).join('')}…` : chars.join('')})`
+}
+
+// A refused action that has since run was approved, or a rule now lets it through: the person has
+// nothing left to do about it.
+const clearBlocked = async ($: EngineInterface, tool: string, input: unknown) => {
+  const key = actionKey(tool, input)
+  const isIt = (one: Question) => one.blocked?.tool === tool && one.blocked.key === key
+
+  // Read first: this runs after every tool call, and a write for nothing draws the board again.
+  if ((await read($, questions)).open.some(isIt)) {
+    await update($, questions, value => ({
+      ...value,
+      open: value.open.filter(one => !isIt(one)),
+    }))
+  }
+}
+
 export const register: Register = on => {
   // What the last drawing looked like, for the hook that scrolls it: a drawing may not write
   // $.state, and a scroll event carries neither the pane's width nor where its boxes sit.
@@ -311,6 +361,9 @@ export const register: Register = on => {
     max: Offsets
   } = { bodyRows: 0, isRow: false, isWhole: false, names: [], ends: [], max: TOP }
   let seqAtTurnStart = -1
+  // How many refused actions went on the board since then: they move the question count too, and
+  // are not questions the model asked.
+  let blockedAdds = 0
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -546,7 +599,8 @@ export const register: Register = on => {
       .map(one => one.question.trim())
     await update($, questions, value => ({
       ...value,
-      open: value.open.filter(one => !answered.includes(one.text)),
+      // A refused action worded like the question is not answered by it.
+      open: value.open.filter(one => one.blocked !== undefined || !answered.includes(one.text)),
     }))
 
     return ran
@@ -563,18 +617,67 @@ export const register: Register = on => {
     const at = await $.clock.now()
     const { open } = await update($, questions, value =>
       addTo(
-        { ...value, open: value.open.filter(one => !resolve.includes(one.id.toLowerCase())) },
+        {
+          ...value,
+          // A refused action leaves once it runs or the person presses its ○, not on the model's word.
+          open: value.open.filter(
+            one => one.blocked !== undefined || !resolve.includes(one.id.toLowerCase()),
+          ),
+        },
         add,
         at,
       ),
     )
+    const asked = open.filter(one => one.blocked === undefined)
 
     return {
       result:
-        open.length === 0
+        asked.length === 0
           ? 'No open questions.'
-          : open.map(one => `${one.id.toUpperCase()}: ${one.text}`).join('\n'),
+          : asked.map(one => `${one.id.toUpperCase()}: ${one.text}`).join('\n'),
     }
+  })
+
+  // NOTE: a subagent's refused action goes on the board too, unlike its other steps: only the
+  // person can approve it, whichever loop asked.
+  on('classic.PermissionDenied', async ($, e, next) => {
+    const blocked = { tool: e.tool_name, key: actionKey(e.tool_name, e.tool_input) }
+    const text = `Auto mode blocked ${shownAction(e.tool_name, e.tool_input)}. Approve it in /permissions.`
+    const at = await $.clock.now()
+    let added = 0
+    await update($, questions, value => {
+      // Set by the run that is written: update runs this again when another write came first.
+      added = 0
+
+      const isThere = value.open.some(
+        one => one.blocked?.tool === blocked.tool && one.blocked.key === blocked.key,
+      )
+
+      if (isThere) {
+        return value
+      }
+
+      added = 1
+      const seq = value.seq + 1
+
+      return { seq, open: [...value.open, { id: `q${seq}`, text, at, blocked }] }
+    })
+    blockedAdds += added
+
+    return next(e)
+  })
+
+  // Either one means the tool ran, so whatever refused it before has since let it through.
+  on('classic.PostToolUse', async ($, e, next) => {
+    await clearBlocked($, e.tool_name, e.tool_input)
+
+    return next(e)
+  })
+
+  on('classic.PostToolUseFailure', async ($, e, next) => {
+    await clearBlocked($, e.tool_name, e.tool_input)
+
+    return next(e)
   })
 
   on('tool.call', { tool: 'mcp__sticky-board__answered' }, async ($, e) => {
@@ -736,7 +839,8 @@ export const register: Register = on => {
     }
 
     const notes: string[] = []
-    const { open } = await read($, questions)
+    // A refused action is the person's to approve in /permissions, not the model's to resolve.
+    const open = (await read($, questions)).open.filter(one => one.blocked === undefined)
 
     // The model sees the open questions as the person replies, the moment it can tell which they answered.
     if (open.length > 0) {
@@ -802,7 +906,14 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
+    // A subagent's turn starts inside the main one: counting from there would forget what the
+    // main turn had already added.
+    if (e.agentId !== undefined) {
+      return next(e)
+    }
+
     seqAtTurnStart = (await read($, questions)).seq
+    blockedAdds = 0
 
     return next(e)
   })
@@ -811,7 +922,7 @@ export const register: Register = on => {
     const isMainAnswer = e.agentId === undefined && e.reason === 'answer'
 
     // The check behind the rule: a reply that ends on a question nobody recorded still reaches the board.
-    if (isMainAnswer && (await read($, questions)).seq === seqAtTurnStart) {
+    if (isMainAnswer && (await read($, questions)).seq - blockedAdds === seqAtTurnStart) {
       await addQuestions($, closingQuestions(e.answer))
     }
 

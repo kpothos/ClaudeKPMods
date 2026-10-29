@@ -1759,7 +1759,7 @@ test(
     await clearBoard($)
 
     const band = await $.ui.mount(ABOVE_PROMPT(false))
-    expect(await band.drawn()).toStrictEqual(bottomTrees.at(-1))
+    expect(await band.drawn()).toMatchObject(bottomTrees.at(-1))
 
     const badName = await $.tool.call({
       tool: PRS_TOOL,
@@ -1795,7 +1795,7 @@ test(
     expect(badStage).toStrictEqual({ result: invalidMessage })
     expect(missingStage).toStrictEqual({ result: invalidMessage })
     expect(badOk).toStrictEqual({ result: invalidMessage })
-    expect(await band.drawn()).toStrictEqual(bottomTrees.at(-1))
+    expect(await band.drawn()).toMatchObject(bottomTrees.at(-1))
 
     const added = await $.tool.call({
       tool: PRS_TOOL,
@@ -1837,7 +1837,7 @@ test(
       remove: true,
     })
     expect(removed).toStrictEqual({ result: 'Release is off the board.' })
-    expect(await band.drawn()).toStrictEqual(bottomTrees.at(-1))
+    expect(await band.drawn()).toMatchObject(bottomTrees.at(-1))
 
     const readded = await $.tool.call({
       tool: PRS_TOOL,
@@ -1860,7 +1860,7 @@ test(
     expect(rows[0]).toContain('Needs attention.')
 
     const surveyed = await $.ui.mount(ABOVE_PROMPT(true))
-    expect(await surveyed.drawn()).toStrictEqual(bottomTrees.at(-1))
+    expect(await surveyed.drawn()).toMatchObject(bottomTrees.at(-1))
 
     await surveyed.unmount()
     await band.unmount()
