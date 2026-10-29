@@ -59,7 +59,7 @@ Beside the conversation:
 And across the window, above the prompt:
 
 ```
-14:05 ✔ P1 saved carts #142 · ■■■□□ 3/5 CI tests running · unit tests passed, end-to-end running
+14:05 ✔ P1 saved carts #142 · ●━●━◉━○━○ CI tests running · unit tests passed, end-to-end running
 ```
 
 Every entry shows the time it last changed and carries a label (`T3`, `Q2`, `A1`, `D2`, `P1`) that
@@ -90,9 +90,10 @@ Across the window, in the strip above the prompt:
 
 - **Pull requests.** One row for each pull request Claude is taking through to release: the stage
   it is at (pre-PR tests, PR open, CI tests, merge and deploy, live), a `✔` or `✖` for whether
-  everything is fine, and a few words on why. Claude reports these as it goes; the mod does not
-  check GitHub itself. The newest 2 are kept. The strip is drawn only while there are pull
-  requests.
+  everything is fine, and a few words on why. The stages are five dots: green for the ones passed,
+  yellow for the one it is at (green once live, red when something is wrong), gray for the rest.
+  Claude reports these as it goes; the mod does not check GitHub itself. The newest 2 are kept.
+  The strip is drawn only while there are pull requests.
 
 Where the panel sits: beside the conversation in fullscreen mode from 110 columns, above the prompt
 otherwise. It opens by itself in a wide window (144 columns, or 110 once you have opened it

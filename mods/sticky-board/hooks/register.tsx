@@ -45,6 +45,14 @@ const POINT_COLOR: Record<DesignState, string> = {
   settled: 'success',
 }
 
+// Theme keys rather than fixed colors, so each box keeps its blue, orange, green or purple in a light or dark theme.
+const BOX_COLOR: Record<keyof Offsets, string> = {
+  tasks: 'ide',
+  questions: 'claude',
+  answers: 'success',
+  design: 'merged',
+}
+
 const STAGES: readonly PrStage[] = ['pre_pr', 'open', 'ci', 'deploy', 'live']
 const STAGE_LABEL: Record<PrStage, string> = {
   pre_pr: 'Pre-PR: running the test suites',
@@ -1178,16 +1186,22 @@ export const register: Register = on => {
               [box.name]: clamp(Math.min(whole(value)[box.name], shown.max) + by, 0, shown.max),
             }))
 
+          // Beside the title label, the note gives way first: squeezed, the label would wrap onto a
+          // second row in a narrow box.
           return (
             <Box
               flexDirection="column"
               borderStyle="round"
-              borderDimColor
+              borderColor={BOX_COLOR[box.name]}
               paddingX={1}
               width={boxColumns}
             >
               <Box>
-                <Text bold>{box.title}</Text>
+                <Box flexShrink={0}>
+                  <Text bold color="inverseText" backgroundColor={BOX_COLOR[box.name]}>
+                    {` ${box.title} `}
+                  </Text>
+                </Box>
                 <Text dimColor wrap="truncate-end">
                   {' '}
                   {box.note}
@@ -1252,18 +1266,33 @@ export const register: Register = on => {
     return (
       <Box flexDirection="column">
         {requests.map(one => {
-          const place = STAGES.indexOf(one.stage) + 1
-          const strip = `${'■'.repeat(place)}${'□'.repeat(STAGES.length - place)}`
+          const place = STAGES.indexOf(one.stage)
           const title = one.number === undefined ? one.name : `${one.name} #${one.number}`
           const status = one.status === '' ? '' : ` · ${one.status}`
+          // The stage it is at: yellow while it runs, green once live, red when something is wrong. Each
+          // link takes the color of the stage it leads to, so the line fills in as the stages pass.
+          const current = !one.isOk ? 'error' : one.stage === 'live' ? 'success' : 'warning'
 
+          // Only the name and the status give way to a narrow window: squeezed, the marks and the
+          // pipeline would wrap onto a second row.
           return (
             <Box>
-              <Text dimColor>{clock(one.at)} </Text>
-              <Text color={one.isOk ? 'success' : 'error'}>{one.isOk ? '✔' : '✖'}</Text>
+              <Box flexShrink={0}>
+                <Text dimColor>{clock(one.at)} </Text>
+                <Text color={one.isOk ? 'success' : 'error'}>{one.isOk ? '✔' : '✖'}</Text>
+              </Box>
+              <Text wrap="truncate-end">{` P${one.n} ${title}`}</Text>
+              <Box flexShrink={0}>
+                <Text> · </Text>
+                {STAGES.map((_, index) => (
+                  <Text color={index < place ? 'success' : index === place ? current : 'inactive'}>
+                    {`${index === 0 ? '' : '━'}${index < place ? '●' : index === place ? '◉' : '○'}`}
+                  </Text>
+                ))}
+              </Box>
               <Text wrap="truncate-end">
                 {' '}
-                {`P${one.n} ${title} · ${strip} ${place}/${STAGES.length} ${STAGE_LABEL[one.stage]}${status}`}
+                {`${STAGE_LABEL[one.stage]}${status}`}
               </Text>
             </Box>
           )

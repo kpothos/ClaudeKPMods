@@ -742,7 +742,7 @@ test(
     const taskBox = borderedBoxes(tree)[0]
     const itemRows = boxRows(tree, 0).slice(1)
 
-    expect(textOf(taskBox)).toContain('Tasks 1 open')
+    expect(textOf(taskBox)).toContain(' Tasks  1 open')
     expect(textOf(taskBox)).not.toContain('No tasks yet.')
     expect(itemRows).toHaveLength(1)
     expect(itemRows[0]).toContain(timeAt(BASE_TIME))
@@ -1120,7 +1120,7 @@ test(
     const rows = boxRows(tree, 2).join('\n')
 
     expect(answeredText).toContain(
-      'Answered 2 · ○ done · ↑ scroll back',
+      ' Answered  2 · ○ done · ↑ scroll back',
     )
     expect(answeredText).not.toContain('Use Postgres.')
     expect(rowWith(tree, 2, 'How should data be stored?')).toContain(
@@ -1186,7 +1186,7 @@ test(
     const answerBox = borderedBoxes(tree)[2]
 
     expect(textOf(answerBox)).toContain(
-      'Answered 1 · ○ done · ↑ scroll back',
+      ' Answered  1 · ○ done · ↑ scroll back',
     )
 
     const done = rowButton(tree, 2, 'A1', 'done-')
@@ -1263,7 +1263,7 @@ test(
     tree = await ui.drawn()
     let answeredText = textOf(borderedBoxes(tree)[2])
     expect(answeredText).toContain(
-      'Answered 1 · ○ done · ↑ scroll back',
+      ' Answered  1 · ○ done · ↑ scroll back',
     )
     expect(answeredText).toContain('A1 Older answered question?')
     expect(answeredText).toContain('Older answer.')
@@ -1342,7 +1342,7 @@ test(
     let all = textOf(tree)
 
     expect(borderedBoxes(tree)).toHaveLength(1)
-    expect(all).toContain('Answered 30 · ○ done · ↑ scroll back')
+    expect(all).toContain(' Answered  30 · ○ done · ↑ scroll back')
     expect(all).toContain('A31 Question 31?')
     expect(all.indexOf('Question 31?')).toBeGreaterThanOrEqual(0)
     expect(all.indexOf('Question 30?')).toBeGreaterThanOrEqual(0)
@@ -1663,7 +1663,7 @@ test(
     let designText = textOf(borderedBoxes(dockTree)[3])
 
     expect(borderedBoxes(dockTree)).toHaveLength(4)
-    expect(designText).toContain('Design points 1 settled, 2 to go')
+    expect(designText).toContain(' Design points  1 settled, 2 to go')
     expect(rowWith(dockTree, 3, 'D1 Choose storage')).toContain('◻')
     expect(rowWith(dockTree, 3, 'D2 Select region')).toContain('✔')
     expect(rowWith(dockTree, 3, 'D3 Set cache policy')).toContain('◼')
@@ -1704,7 +1704,7 @@ test(
 
     dockTree = await dock.drawn()
     designText = textOf(borderedBoxes(dockTree)[3])
-    expect(designText).toContain('Design points all 3 settled')
+    expect(designText).toContain(' Design points  all 3 settled')
     expect(designText).toContain('Decision: Use SQLite.')
     expect(designText).toContain('Decision: Cache for five minutes.')
 
@@ -1736,6 +1736,44 @@ test(
     expect(textOf(dockTree)).not.toContain('Design points')
 
     await emptyDock.unmount()
+  },
+)
+
+test(
+  'pane boxes use distinct border colors and matching padded inverse title labels',
+  async ($: any, on: any) => {
+    setup(on)
+    await clearBoard($)
+
+    await $.tool.call({
+      tool: DESIGN_TOOL,
+      points: [{ topic: 'Colored design box', state: 'unsettled' }],
+    })
+
+    const ui = await $.ui.mount(PANE('dock', 100, 40))
+    const boxes = borderedBoxes(await ui.drawn())
+    const look = boxes.map(box => {
+      const labelBox = box.children?.[0]?.children?.[0]
+      const label = labelBox?.children?.[0]
+
+      return [
+        box.props.borderColor,
+        labelBox?.props?.flexShrink,
+        label?.props?.bold,
+        label?.props?.color,
+        label?.props?.backgroundColor,
+        textOf(label),
+      ]
+    })
+
+    expect(look).toMatchObject([
+      ['ide', 0, true, 'inverseText', 'ide', ' Tasks '],
+      ['claude', 0, true, 'inverseText', 'claude', ' Open questions '],
+      ['success', 0, true, 'inverseText', 'success', ' Answered '],
+      ['merged', 0, true, 'inverseText', 'merged', ' Design points '],
+    ])
+
+    await ui.unmount()
   },
 )
 
@@ -1817,7 +1855,7 @@ test(
     expect(rows[0]).toContain('✔')
     expect(rows[0]).toContain('P1 Release #17')
     expect(rows[0]).toContain(
-      '■□□□□ 1/5 Pre-PR: running the test suites',
+      '◉━○━○━○━○ Pre-PR: running the test suites',
     )
     expect(rows[0]).toContain('Running tests.')
 
@@ -1856,7 +1894,7 @@ test(
     expect(rows[0]).toContain('✖')
     expect(rows[0]).toContain('P2 Release')
     expect(rows[0]).not.toContain('#17')
-    expect(rows[0]).toContain('■■■■■ 5/5 Live')
+    expect(rows[0]).toContain('●━●━●━●━◉ Live')
     expect(rows[0]).toContain('Needs attention.')
 
     const surveyed = await $.ui.mount(ABOVE_PROMPT(true))
@@ -1970,12 +2008,12 @@ test(
     expect(aIndex).toBeGreaterThan(bIndex)
     expect(rows[bIndex]).toContain('P2 PR B')
     expect(rows[bIndex]).toContain('✖')
-    expect(rows[bIndex]).toContain('■■■□□ 3/5 CI tests running')
+    expect(rows[bIndex]).toContain('●━●━◉━○━○ CI tests running')
     expect(rows[bIndex]).toContain('Tests failed.')
     expect(rows[aIndex]).toContain('P1 PR A #41')
     expect(rows[aIndex]).toContain('✔')
     expect(rows[aIndex]).toContain(
-      '■■■■□ 4/5 Merging and deploying',
+      '●━●━●━◉━○ Merging and deploying',
     )
     expect(rows[aIndex]).toContain('Deploying.')
     expect(all).not.toContain('Opened.')
@@ -2084,7 +2122,7 @@ test(
       const tree = await band.drawn()
       const rows = abovePromptRows(tree)
       const place = index + 1
-      const strip = `${'■'.repeat(place)}${'□'.repeat(5 - place)}`
+      const pipeline = `${'●━'.repeat(index)}◉${'━○'.repeat(4 - index)}`
       const shownName =
         'number' in one ? `${one.name} #${one.number}` : one.name
       const row = rows[0]
@@ -2093,7 +2131,7 @@ test(
       expect(row).toContain(timeAt(BASE_TIME))
       expect(row).toContain(`P${place} ${shownName}`)
       expect(row).toContain(one.ok ? '✔' : '✖')
-      expect(row).toContain(`${strip} ${place}/5 ${one.label}`)
+      expect(row).toContain(`${pipeline} ${one.label}`)
       expect(row).toContain(one.status)
 
       if (one.stage === 'ci') {
@@ -2124,6 +2162,114 @@ test(
 
       await band.unmount()
     }
+  },
+)
+
+test(
+  'pull-request pipelines use the glyph and destination color for every stage and health',
+  async ($: any, on: any) => {
+    setup(on)
+    await clearBoard($)
+
+    const cases = [
+      {
+        stage: 'pre_pr',
+        ok: true,
+        expected: '◉:warning|━○:inactive|━○:inactive|━○:inactive|━○:inactive',
+      },
+      {
+        stage: 'ci',
+        ok: true,
+        expected: '●:success|━●:success|━◉:warning|━○:inactive|━○:inactive',
+      },
+      {
+        stage: 'ci',
+        ok: false,
+        expected: '●:success|━●:success|━◉:error|━○:inactive|━○:inactive',
+      },
+      {
+        stage: 'live',
+        ok: true,
+        expected: '●:success|━●:success|━●:success|━●:success|━◉:success',
+      },
+      {
+        stage: 'live',
+        ok: false,
+        expected: '●:success|━●:success|━●:success|━●:success|━◉:error',
+      },
+    ] as const
+
+    await $.tool.call({
+      tool: PRS_TOOL,
+      name: 'Pipeline release',
+      stage: cases[0].stage,
+      ok: cases[0].ok,
+    })
+
+    const band = await $.ui.mount(ABOVE_PROMPT(false))
+    const seen: string[] = []
+
+    for (const [index, one] of cases.entries()) {
+      if (index > 0) {
+        await $.tool.call({
+          tool: PRS_TOOL,
+          name: 'Pipeline release',
+          stage: one.stage,
+          ok: one.ok,
+        })
+      }
+
+      const row = abovePromptRowNodes(await band.drawn())[0]
+      const pipeline = row?.children?.[2]
+      const segments = (pipeline?.children ?? []).slice(1)
+      seen.push(
+        segments
+          .map((segment: any) => `${textOf(segment)}:${segment.props?.color}`)
+          .join('|'),
+      )
+    }
+
+    expect(seen).toMatchObject(cases.map(one => one.expected))
+
+    await band.unmount()
+  },
+)
+
+test(
+  'pull-request rows keep the clock and pipeline fixed while truncating title and status',
+  async ($: any, on: any) => {
+    setup(on)
+    await clearBoard($)
+
+    await $.tool.call({
+      tool: PRS_TOOL,
+      name: 'A release name long enough to compete for the row',
+      stage: 'deploy',
+      ok: false,
+      status: 'A deployment status long enough to compete for the row',
+    })
+
+    const band = await $.ui.mount(ABOVE_PROMPT(false, 50))
+    const row = abovePromptRowNodes(await band.drawn())[0]
+
+    expect(row).toMatchObject({
+      type: 'Box',
+      children: [
+        {
+          type: 'Box',
+          props: { flexShrink: 0 },
+          children: [
+            { type: 'Text', children: [timeAt(BASE_TIME), ' '] },
+            { type: 'Text', children: ['✖'] },
+          ],
+        },
+        { type: 'Text', props: { wrap: 'truncate-end' } },
+        { type: 'Box', props: { flexShrink: 0 } },
+        { type: 'Text', props: { wrap: 'truncate-end' } },
+      ],
+    })
+
+    await band.unmount()
   },
 )
 

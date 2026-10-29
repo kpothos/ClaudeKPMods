@@ -1,6 +1,6 @@
 {
   "name": "sticky-board",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "A pinned board of tasks, open questions, answered questions, design points and pull requests.",
   "author": {
     "name": "Kirk Pothos"
