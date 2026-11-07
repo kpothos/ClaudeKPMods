@@ -12,6 +12,7 @@ import type {
   PullRequests,
   Question,
   Questions,
+  RuleState,
   Task,
   Tasks,
   TaskStatus,
@@ -72,6 +73,9 @@ The user keeps a board on screen: Tasks, Open questions, Answered, Design points
 Every entry on the board carries a label the user can see: T3 for a task, Q2 for an open question, A1 for an answered one, D2 for a design point, P1 for a pull request. The user may name an entry by its label; what the label stands for then comes with their message.
 Do not add rhetorical questions, and do not mention the board unless the user asks about it.`
 
+// The same rule, for a conversation whose system prompt was built before the board was on screen.
+const LATE_RULE = `The user's sticky board is now on screen, but this conversation's instructions were set before it was. These instructions about the board hold from now on:\n\n${RULE}`
+
 const TOOLS = [
   'mcp__sticky-board__tasks',
   'mcp__sticky-board__questions',
@@ -109,6 +113,10 @@ const offsets = atom({ plugin: 'sticky-board', key: 'scroll' } as const, TOP)
 // A session keeps its values across an update of the mod: offsets kept by a version with fewer
 // boxes lack the newer ones, which start at the top.
 const whole = (value: Offsets): Offsets => ({ ...TOP, ...value })
+// The engine keeps sending the system prompt built for a conversation's first message, until it
+// compacts. The desktop app attaches only after that message, so there the rule is left out of
+// it, and the person's next message carries it instead.
+const rule = atom({ plugin: 'sticky-board', key: 'rule' } as const, 'unknown' as RuleState)
 
 // The boxes in the order they are drawn.
 const ORDER: readonly (keyof Offsets)[] = ['tasks', 'questions', 'answers', 'design']
@@ -494,6 +502,7 @@ export const register: Register = on => {
       await update($, prs, () => ({ seq: 0, list: [] }))
       await update($, design, () => ({ seq: 0, list: [] }))
       await update($, offsets, () => TOP)
+      await update($, rule, () => 'unknown')
     }
 
     return next(e)
@@ -823,7 +832,17 @@ export const register: Register = on => {
     const composed = await next(e)
 
     // Nobody reads a board in a run that draws nowhere, and a loop without the tools cannot follow the rule.
-    if (e.surfaces.length === 0 || !TOOLS.every(tool => e.tools.includes(tool))) {
+    const hasTools = TOOLS.every(tool => e.tools.includes(tool))
+    const isSent = e.surfaces.length > 0 && hasTools
+
+    // Only the first prompt is sent: the ones built after it change nothing the model reads. A
+    // screen arriving later makes up for a missing screen, not for missing tools.
+    if ((await read($, rule)) === 'unknown') {
+      const decided: RuleState = !isSent && hasTools ? 'owed' : 'settled'
+      await update($, rule, value => (value === 'unknown' ? decided : value))
+    }
+
+    if (!isSent) {
       return composed
     }
 
@@ -847,6 +866,23 @@ export const register: Register = on => {
     }
 
     const notes: string[] = []
+
+    let isTelling = false
+
+    // A run that never draws, like `claude -p`, is never told: the board stays out of its way.
+    if ((await read($, rule)) === 'owed' && (await $.session.surfaces()).length > 0) {
+      await update($, rule, value => {
+        // Set by the run that is written, as in classic.PermissionDenied: one message carries it.
+        isTelling = value === 'owed'
+
+        return isTelling ? 'told' : value
+      })
+
+      if (isTelling) {
+        notes.push(LATE_RULE)
+      }
+    }
+
     // A refused action is the person's to approve in /permissions, not the model's to resolve.
     const open = (await read($, questions)).open.filter(one => one.blocked === undefined)
 
@@ -910,7 +946,15 @@ export const register: Register = on => {
       }
     }
 
-    return notes.length === 0 ? next(e) : next({ ...e, context: [...(e.context ?? []), ...notes] })
+    const entered =
+      notes.length === 0 ? await next(e) : await next({ ...e, context: [...(e.context ?? []), ...notes] })
+
+    // A prompt that did not enter took the rule with it: the next one carries it instead.
+    if (isTelling && entered.drop !== undefined) {
+      await update($, rule, value => (value === 'told' ? 'owed' : value))
+    }
+
+    return entered
   })
 
   on('turn.start', async ($, e, next) => {

@@ -52,6 +52,12 @@ export type DesignPoints = { seq: number; list: DesignPoint[] }
 // The pull requests are drawn in the band above the prompt, which the engine scrolls.
 export type Offsets = { tasks: number; questions: number; answers: number; design: number }
 
+// Whether the model still has to be told the board's rule: `unknown` until the conversation's first
+// prompt is built; `owed` when it was left out only because nothing drew yet; `settled` when that
+// prompt carries it, or left it out for a reason a screen does not change; `told` once a message
+// carried it.
+export type RuleState = 'unknown' | 'settled' | 'owed' | 'told'
+
 declare module 'claude-code' {
   interface PluginState {
     'sticky-board': {
@@ -61,6 +67,7 @@ declare module 'claude-code' {
       prs: Shaped<PullRequests>
       design: Shaped<DesignPoints>
       scroll: Offsets
+      rule: RuleState
     }
   }
 }
