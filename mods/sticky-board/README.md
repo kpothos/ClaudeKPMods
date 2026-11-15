@@ -153,9 +153,38 @@ requests Claude Code already sends. That is all of it:
   are kept and older ones are deleted. A board too large to keep (over 150,000 characters, where a
   usual one is a few thousand) is not saved.
 
-On computers whose Claude Code settings an organization manages, Claude Code does not let a mod
-like this one add to Claude's instructions. The board still draws and its tools still work there,
-but Claude is not told to keep it, so it fills in less.
+## At work: Claude Code managed by your organization
+
+This applies when your organization manages Claude Code on your computer (managed settings), or
+when you sign in with a Team or Enterprise account. There, Claude Code does not let a mod you
+installed yourself add to Claude's instructions; only plugins your organization installs can.
+
+What still works:
+
+- Everything you see and do on the board: the boxes, `/sticky`, `/sticky note`, the `○` and `↑`
+  marks, scrolling, and the board coming back when you resume a conversation.
+- The five tools Claude uses to keep the board, each with its own description.
+- The short list of open questions and design points that goes with each of your messages, and
+  what a label such as `T3` stands for when you name it.
+- Questions Claude ends a reply on, which the mod still adds to the board itself.
+
+What does not:
+
+- The section of Claude's instructions that tells Claude to keep the board. Without it, Claude
+  uses the board only when it decides to, so the boxes fill in less.
+
+What you can do:
+
+- Ask Claude yourself, for example at the start of a conversation: "Keep my sticky board up to
+  date as you work: your task list, the questions you leave me, short answers to my questions,
+  design points and pull requests."
+- Ask your administrator to install the board for your organization. In the organization's managed
+  settings, they enable `sticky-board@claude-mods` in `enabledPlugins`, add the marketplace
+  `kpothos/ClaudeKPMods` to `extraKnownMarketplaces`, and list the plugin in `prependPlugins` or
+  `appendPlugins`. Installed that way it counts as the organization's own, and it adds its
+  instructions as usual.
+- If your organization allows only plugins it has approved, the board cannot be installed until
+  your administrator approves it.
 
 ## What you need
 
