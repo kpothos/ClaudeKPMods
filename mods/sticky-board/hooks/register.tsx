@@ -6,6 +6,8 @@ import type {
   DesignPoint,
   DesignPoints,
   DesignState,
+  Note,
+  Notes,
   Offsets,
   PrStage,
   PullRequest,
@@ -13,6 +15,7 @@ import type {
   Question,
   Questions,
   RuleState,
+  SavedBoard,
   Task,
   Tasks,
   TaskStatus,
@@ -30,6 +33,15 @@ const KEPT_ANSWERS = 30
 const KEPT_PRS = 2
 // How much of a refused action the board shows: /permissions has the whole of it.
 const SHOWN_ACTION = 80
+// How many of the person's notes the board keeps: the oldest leave first.
+const KEPT_NOTES = 30
+// How many conversations' boards $.store keeps for a resume: the oldest leave first.
+const KEPT_BOARDS = 20
+// NOTE: the store holds 4 MiB in all, so a board larger than this is not kept for a resume rather
+// than crowding out the others. A board of the usual size is a few thousand characters.
+const MAX_SAVED = 150_000
+// The $.store key of a kept board, before the conversation's id.
+const SAVED = 'board:'
 
 const RANK: Record<TaskStatus, number> = { in_progress: 0, pending: 1, completed: 2 }
 const MARK: Record<TaskStatus, string> = { in_progress: '◼', pending: '◻', completed: '✔' }
@@ -46,12 +58,13 @@ const POINT_COLOR: Record<DesignState, string> = {
   settled: 'success',
 }
 
-// Theme keys rather than fixed colors, so each box keeps its blue, orange, green or purple in a light or dark theme.
+// Theme keys rather than fixed colors, so each box keeps its blue, orange, green, purple or yellow in a light or dark theme.
 const BOX_COLOR: Record<keyof Offsets, string> = {
   tasks: 'ide',
   questions: 'claude',
   answers: 'success',
   design: 'merged',
+  notes: 'warning',
 }
 
 const STAGES: readonly PrStage[] = ['pre_pr', 'open', 'ci', 'deploy', 'live']
@@ -108,7 +121,8 @@ const prs = atom({ plugin: 'sticky-board', key: 'prs' } as const, { seq: 0, list
 const design = atom({ plugin: 'sticky-board', key: 'design' } as const, { seq: 0, list: [] }, {
   shape: 'numbered',
 })
-const TOP: Offsets = { tasks: 0, questions: 0, answers: 0, design: 0 }
+const notes = atom({ plugin: 'sticky-board', key: 'notes' } as const, { seq: 0, list: [] } as Notes)
+const TOP: Offsets = { tasks: 0, questions: 0, answers: 0, design: 0, notes: 0 }
 const offsets = atom({ plugin: 'sticky-board', key: 'scroll' } as const, TOP)
 // A session keeps its values across an update of the mod: offsets kept by a version with fewer
 // boxes lack the newer ones, which start at the top.
@@ -117,9 +131,12 @@ const whole = (value: Offsets): Offsets => ({ ...TOP, ...value })
 // compacts. The desktop app attaches only after that message, so there the rule is left out of
 // it, and the person's next message carries it instead.
 const rule = atom({ plugin: 'sticky-board', key: 'rule' } as const, 'unknown' as RuleState)
+// Which conversation the board on screen belongs to: the engine empties $.state when a /clear or
+// /resume switches conversations, which leaves this empty too.
+const owner = atom({ plugin: 'sticky-board', key: 'owner' } as const, '')
 
 // The boxes in the order they are drawn.
-const ORDER: readonly (keyof Offsets)[] = ['tasks', 'questions', 'answers', 'design']
+const ORDER: readonly (keyof Offsets)[] = ['tasks', 'questions', 'answers', 'design', 'notes']
 
 type BoxName = keyof Offsets
 
@@ -365,6 +382,265 @@ const clearBlocked = async ($: EngineInterface, tool: string, input: unknown) =>
   }
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const isCount = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0
+
+const isTime = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0
+
+const isLabel = (value: unknown): value is number => isCount(value) && value >= 1
+
+// One kept box: its counter and every entry in the form the board draws, or nothing at all, since
+// a board drawn from a half-good copy could fail to draw. A counter behind an entry's label would
+// give that label out again.
+const keptBox = (
+  value: unknown,
+  listKey: string,
+  isEntry: (one: Record<string, unknown>) => boolean,
+  labelOf: (one: Record<string, unknown>) => number = one => Number(one.n),
+) => {
+  if (!isRecord(value) || !isCount(value.seq)) {
+    return undefined
+  }
+
+  const { seq } = value
+  const list = value[listKey]
+
+  return Array.isArray(list) &&
+    list.every(one => isRecord(one) && isEntry(one) && labelOf(one) <= seq)
+    ? { seq, list: list as unknown[] }
+    : undefined
+}
+
+// A board $.store kept, as this version wrote it, or nothing when any part of it is not.
+const keptBoard = (value: unknown): SavedBoard | undefined => {
+  if (!isRecord(value) || value.v !== 1 || !isTime(value.at)) {
+    return undefined
+  }
+
+  const kept = {
+    tasks: keptBox(
+      value.tasks,
+      'list',
+      one =>
+        typeof one.id === 'string' &&
+        isLabel(one.n) &&
+        typeof one.subject === 'string' &&
+        isStatus(one.status) &&
+        isTime(one.at),
+    ),
+    // Refused actions are never kept: they belong to the process that was refused.
+    questions: keptBox(
+      value.questions,
+      'open',
+      one =>
+        typeof one.id === 'string' &&
+        /^q[1-9]\d*$/.test(one.id) &&
+        typeof one.text === 'string' &&
+        isTime(one.at) &&
+        one.blocked === undefined,
+      one => Number(String(one.id).slice(1)),
+    ),
+    answers: keptBox(
+      value.answers,
+      'list',
+      one =>
+        isLabel(one.n) &&
+        typeof one.rowId === 'string' &&
+        typeof one.question === 'string' &&
+        typeof one.answer === 'string' &&
+        isTime(one.at),
+    ),
+    prs: keptBox(
+      value.prs,
+      'list',
+      one =>
+        isLabel(one.n) &&
+        typeof one.name === 'string' &&
+        (one.number === undefined || isLabel(one.number)) &&
+        isStage(one.stage) &&
+        typeof one.isOk === 'boolean' &&
+        typeof one.status === 'string' &&
+        isTime(one.at),
+    ),
+    design: keptBox(
+      value.design,
+      'list',
+      one =>
+        isLabel(one.n) &&
+        typeof one.topic === 'string' &&
+        typeof one.state === 'string' &&
+        Object.hasOwn(POINT_MARK, one.state) &&
+        typeof one.decision === 'string' &&
+        isTime(one.at),
+    ),
+    notes: keptBox(
+      value.notes,
+      'list',
+      one => isLabel(one.n) && typeof one.text === 'string' && isTime(one.at),
+    ),
+  }
+  const { tasks: t, questions: q, answers: a, prs: p, design: d, notes: n } = kept
+
+  if (!t || !q || !a || !p || !d || !n) {
+    return undefined
+  }
+
+  return {
+    v: 1,
+    at: value.at,
+    tasks: { seq: t.seq, list: t.list as Task[] },
+    questions: { seq: q.seq, open: q.list as Question[] },
+    answers: { seq: a.seq, list: a.list as Answers['list'] },
+    prs: { seq: p.seq, list: p.list as PullRequest[] },
+    design: { seq: d.seq, list: d.list as DesignPoint[] },
+    notes: { seq: n.seq, list: n.list as Note[] },
+  }
+}
+
+// The board as it stands, for a resume; nothing when it is empty and no label was ever given, so
+// there is nothing a resume would need.
+const snapshot = async ($: EngineInterface): Promise<SavedBoard | undefined> => {
+  const [t, q, a, p, d, n] = await Promise.all([
+    read($, tasks),
+    read($, questions),
+    read($, answers),
+    read($, prs),
+    read($, design),
+    read($, notes),
+  ])
+  const open = q.open.filter(one => one.blocked === undefined)
+  // The counters too: a board emptied by hand still must not give a label out again.
+  const isUsed =
+    [t.seq, q.seq, a.seq, p.seq, d.seq, n.seq].some(seq => seq > 0) ||
+    [t.list, open, a.list, p.list, d.list, n.list].some(list => list.length > 0)
+
+  return isUsed
+    ? {
+        v: 1,
+        at: await $.clock.now(),
+        tasks: t,
+        questions: { seq: q.seq, open },
+        answers: a,
+        prs: p,
+        design: d,
+        notes: n,
+      }
+    : undefined
+}
+
+// Kept under the conversation's id, for `claude --resume` and /resume to bring back. Only the
+// board that belongs to the ending conversation is written: one not yet brought back is empty,
+// and would wipe the kept copy.
+const saveBoard = async ($: EngineInterface, id: string) => {
+  const [who, board] = await Promise.all([read($, owner), snapshot($)])
+
+  if (who !== id) {
+    return
+  }
+
+  const key = `${SAVED}${id}`
+
+  if (board === undefined || JSON.stringify(board).length > MAX_SAVED) {
+    await $.store.delete(key)
+
+    return
+  }
+
+  // Written before the oldest are let go: a write that fails then costs no other board, and two
+  // sessions ending at once each see the other's board when they count.
+  await $.store.set(key, board)
+
+  // The other kept boards, newest first, read from the boards themselves: a list of them, written
+  // by two sessions ending at once, would each leave out the other's board, which would then never
+  // be let go. Each key is written on its own, so neither session's board is lost (seen with two
+  // real sessions). One that could not be brought back leaves first. This board stays whatever
+  // its time, so the newest of the others make up the rest.
+  const others = await Promise.all(
+    (await $.store.keys())
+      .filter(one => one.startsWith(SAVED) && one !== key)
+      .map(async one => ({ key: one, at: keptBoard(await $.store.get(one))?.at ?? 0 })),
+  )
+  others.sort((a, b) => b.at - a.at)
+  await Promise.all(others.slice(KEPT_BOARDS - 1).map(one => $.store.delete(one.key)))
+}
+
+// Brings back the board kept for this conversation, once per conversation: a reload runs
+// session.start again, and must not bring back what the person has since taken off.
+const takeOver = async ($: EngineInterface) => {
+  const id = await $.session.id()
+
+  if ((await read($, owner)) === id) {
+    return
+  }
+
+  const [t, q, a, p, d, n] = await Promise.all([
+    read($, tasks),
+    read($, questions),
+    read($, answers),
+    read($, prs),
+    read($, design),
+    read($, notes),
+  ])
+  const isEmpty = [t.list, q.open, a.list, p.list, d.list, n.list].every(list => list.length === 0)
+  // NOTE: a kept board that cannot be read is passed over, and the board starts empty.
+  const board = isEmpty ? keptBoard(await $.store.get(`${SAVED}${id}`).catch(() => undefined)) : undefined
+
+  await Promise.all([
+    update($, owner, () => id),
+    ...(board === undefined
+      ? []
+      : [
+          update($, tasks, () => board.tasks),
+          update($, questions, () => board.questions),
+          update($, answers, () => board.answers),
+          update($, prs, () => board.prs),
+          update($, design, () => board.design),
+          update($, notes, () => board.notes),
+        ]),
+  ])
+}
+
+const plural = (count: number, one: string, many: string): string =>
+  `${count} ${count === 1 ? one : many}`
+
+// The whole board on one line, for the desktop app's small widget, where clicks may not reach.
+const glance = (board: {
+  tasks: readonly Task[]
+  open: number
+  answered: number
+  points: readonly DesignPoint[]
+  notes: number
+  prs: number
+}): string => {
+  const openTasks = board.tasks.filter(task => task.status !== 'completed').length
+  const discussing = board.points.find(one => one.state === 'discussing')
+  const toGo = board.points.filter(one => one.state !== 'settled').length
+  const parts = [
+    openTasks > 0
+      ? `${plural(openTasks, 'task', 'tasks')} open`
+      : board.tasks.length > 0
+        ? `all ${plural(board.tasks.length, 'task', 'tasks')} done`
+        : '',
+    board.open > 0 ? plural(board.open, 'open question', 'open questions') : '',
+    discussing !== undefined
+      ? `D${discussing.n} being discussed`
+      : toGo > 0
+        ? `${plural(toGo, 'design point', 'design points')} to go`
+        : board.points.length > 0
+          ? `all ${plural(board.points.length, 'design point', 'design points')} settled`
+          : '',
+    board.notes > 0 ? plural(board.notes, 'note', 'notes') : '',
+    board.answered > 0 ? `${board.answered} answered` : '',
+    board.prs > 0 ? plural(board.prs, 'pull request', 'pull requests') : '',
+  ].filter(part => part !== '')
+
+  return parts.length === 0 ? 'Nothing on the board yet.' : parts.join(' · ')
+}
+
 export const register: Register = on => {
   // What the last drawing looked like, for the hook that scrolls it: a drawing may not write
   // $.state, and a scroll event carries neither the pane's width nor where its boxes sit.
@@ -384,7 +660,9 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'sticky',
-      description: 'Show the sticky board: tasks, open questions, answers and design points',
+      description:
+        'Show the sticky board (tasks, open questions, answers, design points, notes), or pin a note of your own to it with /sticky note <text>',
+      argumentHint: '[note <text>]',
     })
     await $.tool.register({
       name: 'tasks',
@@ -478,6 +756,9 @@ export const register: Register = on => {
       },
       isDeferred: false,
     })
+    // A conversation started with `claude --resume` or `--continue` gets its board back here. A
+    // kept board that cannot be brought back must not stop the board from opening.
+    await takeOver($).catch(() => undefined)
     void $.ui.open({ id: 'sticky-board', title: 'Sticky board' }).then(opened => {
       if (!opened.isPlaced) {
         $.ui.toast('The sticky board is hidden in a narrow window. Type /sticky to show it.')
@@ -487,22 +768,59 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'sticky' }, async $ => {
-    await $.ui.open({ id: 'sticky-board', title: 'Sticky board' })
+  on('command.run', { command: 'sticky' }, async ($, e) => {
+    // A note pinned right after a /resume typed in the session must land on that conversation's
+    // board, brought back first, or the board would claim the conversation without it.
+    await takeOver($).catch(() => undefined)
 
-    return { text: 'Sticky board opened.' }
+    // NOTE: `args` is documented as "" when left out, but a plugin's `$.command.run` without it
+    // reached this hook as undefined in the test kit (2.1.325).
+    const asked = /^note(?:\s+([\s\S]*))?$/i.exec((e.args ?? '').trim())
+
+    if (asked === null) {
+      await $.ui.open({ id: 'sticky-board', title: 'Sticky board' })
+
+      return { text: 'Sticky board opened.' }
+    }
+
+    const text = (asked[1] ?? '').replace(/\s+/g, ' ').trim()
+
+    // A toast, not the command's output: the output goes to Claude, and the note is the person's own.
+    if (text === '') {
+      $.ui.toast('Type the note after the command: /sticky note <text>')
+
+      return {}
+    }
+
+    const at = await $.clock.now()
+    const { seq } = await update($, notes, (value): Notes => ({
+      seq: value.seq + 1,
+      list: [...value.list, { n: value.seq + 1, text, at }].slice(-KEPT_NOTES),
+    }))
+    await $.ui.open({ id: 'sticky-board', title: 'Sticky board' })
+    $.ui.toast(`Pinned N${seq} to the board.`)
+
+    return {}
   })
 
   on('session.end', async ($, e, next) => {
+    // NOTE: a board that could not be kept is lost for a resume, and nothing more: the session
+    // still ends, and the board below still empties.
+    await saveBoard($, e.sessionId).catch(() => undefined)
+
     // The process goes on with another conversation, which the old one's board says nothing about.
     if (e.reason === 'clear' || e.reason === 'resume') {
-      await update($, tasks, () => ({ seq: 0, list: [] }))
-      await update($, questions, () => ({ seq: 0, open: [] }))
-      await update($, answers, () => ({ seq: 0, list: [] }))
-      await update($, prs, () => ({ seq: 0, list: [] }))
-      await update($, design, () => ({ seq: 0, list: [] }))
-      await update($, offsets, () => TOP)
-      await update($, rule, () => 'unknown')
+      await Promise.all([
+        update($, tasks, () => ({ seq: 0, list: [] })),
+        update($, questions, () => ({ seq: 0, open: [] })),
+        update($, answers, () => ({ seq: 0, list: [] })),
+        update($, prs, () => ({ seq: 0, list: [] })),
+        update($, design, () => ({ seq: 0, list: [] })),
+        update($, notes, () => ({ seq: 0, list: [] })),
+        update($, offsets, () => TOP),
+        update($, rule, () => 'unknown' as RuleState),
+        update($, owner, () => ''),
+      ])
     }
 
     return next(e)
@@ -855,6 +1173,11 @@ export const register: Register = on => {
   })
 
   on('prompt.submit', async ($, e, next) => {
+    // A /resume typed in the session switches conversations with no event of its own: the board
+    // of the resumed one comes back with the first message there, the person's or any other
+    // (a task's notification, a scheduled prompt), before that message's turn can change it.
+    await takeOver($).catch(() => undefined)
+
     const isPerson =
       e.origin.kind === 'composer' ||
       e.origin.kind === 'bridge' ||
@@ -865,7 +1188,7 @@ export const register: Register = on => {
       return next(e)
     }
 
-    const notes: string[] = []
+    const lines: string[] = []
 
     let isTelling = false
 
@@ -879,7 +1202,7 @@ export const register: Register = on => {
       })
 
       if (isTelling) {
-        notes.push(LATE_RULE)
+        lines.push(LATE_RULE)
       }
     }
 
@@ -888,7 +1211,7 @@ export const register: Register = on => {
 
     // The model sees the open questions as the person replies, the moment it can tell which they answered.
     if (open.length > 0) {
-      notes.push(
+      lines.push(
         [
           "Open questions on the user's sticky board:",
           ...open.map(one => `- ${one.id.toUpperCase()}: ${one.text}`),
@@ -902,7 +1225,7 @@ export const register: Register = on => {
     // While a point is still open the model gets the whole agenda with each reply, so a long
     // discussion of one point cannot lose the others.
     if (points.some(one => one.state !== 'settled')) {
-      notes.push(
+      lines.push(
         [
           "Design points on the user's sticky board:",
           ...points.map(
@@ -915,7 +1238,7 @@ export const register: Register = on => {
     }
 
     // The other labels the person reads off the board: where their message names one, what it stands for goes with it.
-    const named = new Set((e.text.match(/\b[TAPD]\d+\b/gi) ?? []).map(label => label.toUpperCase()))
+    const named = new Set((e.text.match(/\b[TAPDN]\d+\b/gi) ?? []).map(label => label.toUpperCase()))
 
     if (named.size > 0) {
       const found = [
@@ -937,17 +1260,21 @@ export const register: Register = on => {
             one =>
               `- D${one.n}: the design point "${one.topic}" (${one.state})${one.state === 'settled' ? `, decided: ${one.decision}` : ''}`,
           ),
+        // The only way a note reaches Claude: the person named it.
+        ...(await read($, notes)).list
+          .filter(one => named.has(`N${one.n}`))
+          .map(one => `- N${one.n}: the user's own note "${one.text}"`),
       ]
 
       if (found.length > 0) {
-        notes.push(
+        lines.push(
           ["Entries on the user's sticky board that this message names:", ...found].join('\n'),
         )
       }
     }
 
     const entered =
-      notes.length === 0 ? await next(e) : await next({ ...e, context: [...(e.context ?? []), ...notes] })
+      lines.length === 0 ? await next(e) : await next({ ...e, context: [...(e.context ?? []), ...lines] })
 
     // A prompt that did not enter took the rule with it: the next one carries it instead.
     if (isTelling && entered.drop !== undefined) {
@@ -1022,6 +1349,29 @@ export const register: Register = on => {
     const { open } = await read($, questions)
     const { list: answered } = await read($, answers)
     const { list: points } = await read($, design)
+    const { list: pinned } = await read($, notes)
+
+    // The desktop app's small widget: one line read at a glance, no marks to press. It leaves
+    // `drawn` alone, which is the full pane's for the scroll hook.
+    if (e.props.placement === 'widget') {
+      const { list: requests } = await read($, prs)
+
+      return (
+        <Box>
+          <Text>
+            {glance({
+              tasks: list,
+              open: open.length,
+              answered: answered.length,
+              points,
+              notes: pinned.length,
+              prs: requests.length,
+            })}
+          </Text>
+        </Box>
+      )
+    }
+
     const at = whole(await read($, offsets))
 
     // Side by side in the short block above the prompt, stacked in the tall dock beside the transcript.
@@ -1031,11 +1381,15 @@ export const register: Register = on => {
       questions: open.length,
       answers: answered.length,
       design: points.length,
+      notes: pinned.length,
     }
     // Side by side every box costs width, so there only the ones with something to show are drawn.
     const filled = ORDER.filter(name => counts[name] > 0)
-    // Design points come and go with a plan: with none, their box is not drawn in the dock either.
-    const docked = ORDER.filter(name => name !== 'design' || counts.design > 0)
+    // Design points come and go with a plan, and notes with the person: with none, their box is not
+    // drawn in the dock either.
+    const docked = ORDER.filter(
+      name => (name !== 'design' && name !== 'notes') || counts[name] > 0,
+    )
     const names = !isRow ? docked : filled.length > 0 ? filled : ORDER.slice(0, 1)
     const boxColumns = isRow ? Math.floor(e.props.bodyColumns / names.length) : e.props.bodyColumns
     // 4: the border and the padding on each side.
@@ -1151,6 +1505,33 @@ export const register: Register = on => {
       ),
     ])
 
+    // Newest first, as with the questions.
+    const noteLines = [...pinned].reverse().flatMap(one =>
+      wrap(`N${one.n} ${one.text}`, textColumns).map(
+        (text, index): Line => ({
+          lead: index === 0 ? clock(one.at) : '',
+          mark: ' ',
+          color: 'text',
+          text,
+          isDim: false,
+          isBold: false,
+          ...(index === 0
+            ? {
+                press: {
+                  key: `note-${one.n}`,
+                  label: '○',
+                  run: () =>
+                    update($, notes, value => ({
+                      ...value,
+                      list: value.list.filter(other => other.n !== one.n),
+                    })),
+                },
+              }
+            : {}),
+        }),
+      ),
+    )
+
     const doneCount = list.filter(task => task.status === 'completed').length
     const settledCount = points.filter(one => one.state === 'settled').length
     const all: BoxSpec[] = [
@@ -1187,6 +1568,13 @@ export const register: Register = on => {
             : `${settledCount} settled, ${points.length - settledCount} to go`,
         empty: 'No design points.',
         lines: pointLines,
+      },
+      {
+        name: 'notes',
+        title: 'Notes',
+        note: pinned.length === 0 ? '' : `${pinned.length} · press ○ to remove`,
+        empty: 'No notes.',
+        lines: noteLines,
       },
     ]
     const boxes = all.filter(box => names.includes(box.name))

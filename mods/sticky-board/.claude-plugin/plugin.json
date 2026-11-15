@@ -1,10 +1,21 @@
 {
   "name": "sticky-board",
-  "version": "0.3.1",
-  "description": "A pinned board of tasks, open questions, answered questions, design points and pull requests.",
+  "displayName": "Sticky board",
+  "version": "0.4.0",
+  "description": "A pinned board of tasks, open questions, answered questions, design points, your own notes and pull requests.",
   "author": {
     "name": "Kirk Pothos"
   },
+  "homepage": "https://github.com/kpothos/ClaudeKPMods/tree/main/mods/sticky-board",
+  "repository": "https://github.com/kpothos/ClaudeKPMods",
+  "documentationUrl": "https://github.com/kpothos/ClaudeKPMods/blob/main/mods/sticky-board/README.md",
+  "supportUrl": "https://github.com/kpothos/ClaudeKPMods/issues",
+  "privacyPolicyUrl": "https://github.com/kpothos/ClaudeKPMods/blob/main/mods/sticky-board/README.md#privacy",
   "license": "MIT",
+  "keywords": ["board", "tasks", "questions", "design", "pull-requests", "notes", "pane"],
+  "icon": "./.claude-plugin/icon.png",
+  "engines": {
+    "claude-code": ">=2.1.286"
+  },
   "types": "./types/index.d.ts"
 }

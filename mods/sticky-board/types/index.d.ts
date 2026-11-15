@@ -49,8 +49,32 @@ export type DesignPoint = {
 
 export type DesignPoints = { seq: number; list: DesignPoint[] }
 
+// The person's own notes, added with /sticky note: Claude does not keep them.
+export type Note = { n: number; text: string; at: number }
+
+export type Notes = { seq: number; list: Note[] }
+
 // The pull requests are drawn in the band above the prompt, which the engine scrolls.
-export type Offsets = { tasks: number; questions: number; answers: number; design: number }
+export type Offsets = {
+  tasks: number
+  questions: number
+  answers: number
+  design: number
+  notes: number
+}
+
+// A conversation's board as $.store keeps it between sessions, so resuming the conversation
+// brings it back. `v` is the form it was written in: a board kept in another form is not read.
+export type SavedBoard = {
+  v: 1
+  at: number
+  tasks: Tasks
+  questions: Questions
+  answers: Answers
+  prs: PullRequests
+  design: DesignPoints
+  notes: Notes
+}
 
 // Whether the model still has to be told the board's rule: `unknown` until the conversation's first
 // prompt is built; `owed` when it was left out only because nothing drew yet; `settled` when that
@@ -66,8 +90,11 @@ declare module 'claude-code' {
       answers: Shaped<Answers>
       prs: Shaped<PullRequests>
       design: Shaped<DesignPoints>
+      notes: Notes
       scroll: Offsets
       rule: RuleState
+      // The session id of the conversation the board belongs to: empty until the board knows.
+      owner: string
     }
   }
 }

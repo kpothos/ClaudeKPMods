@@ -195,6 +195,9 @@ const abovePromptRowNodes = (tree: any): any[] =>
 const abovePromptRows = (tree: any): string[] =>
   abovePromptRowNodes(tree).map(textOf)
 
+const boardAbovePromptRows = (tree: any): string[] =>
+  abovePromptRows(tree).filter(row => row !== 'Bottom AbovePrompt tree.')
+
 const rowNodeWith = (tree: any, boxIndex: number, text: string): any =>
   boxRowNodes(tree, boxIndex).find(row => textOf(row).includes(text))
 
@@ -769,7 +772,7 @@ test(
     expect(first).toStrictEqual([
       { id: 'Q1', text: 'Choose a color?' },
     ])
-    expect(first[0].id).toMatch(/^Q\d+$/)
+    expect(first[0]!.id).toMatch(/^Q\d+$/)
     expect(firstCall.result).toBe('Q1: Choose a color?')
 
     const second = parseQuestions(
@@ -798,7 +801,7 @@ test(
       await $.tool.call({
         tool: QUESTIONS_TOOL,
         add: [],
-        resolve: [first[0].id.toLowerCase(), 'another-unknown-id'],
+        resolve: [first[0]!.id.toLowerCase(), 'another-unknown-id'],
       }),
     )
 
@@ -809,7 +812,7 @@ test(
     const empty = await $.tool.call({
       tool: QUESTIONS_TOOL,
       add: [],
-      resolve: [afterLowerCaseResolve[0].id],
+      resolve: [afterLowerCaseResolve[0]!.id],
     })
     expect(empty).toEqual({ result: 'No open questions.' })
 
@@ -1197,7 +1200,7 @@ test(
     expect(jump.props.label).toBe('↑')
     expect(
       (await ui.findAll({ type: 'Button' })).filter(
-        button =>
+        (button: { key?: string }) =>
           button.key?.startsWith('done-') ||
           button.key?.startsWith('jump-'),
       ),
@@ -1313,7 +1316,7 @@ test(
     expect(answeredText).not.toContain('Older answered question?')
     expect(
       (await ui.findAll({ type: 'Button' })).filter(
-        button =>
+        (button: { key?: string }) =>
           button.key?.startsWith('done-') ||
           button.key?.startsWith('jump-'),
       ),
@@ -1849,7 +1852,7 @@ test(
     })
 
     let tree = await band.drawn()
-    let rows = abovePromptRows(tree)
+    let rows = boardAbovePromptRows(tree)
     expect(rows).toHaveLength(1)
     expect(rows[0]).toContain(timeAt(BASE_TIME))
     expect(rows[0]).toContain('✔')
@@ -1889,7 +1892,7 @@ test(
     })
 
     tree = await band.drawn()
-    rows = abovePromptRows(tree)
+    rows = boardAbovePromptRows(tree)
     expect(rows).toHaveLength(1)
     expect(rows[0]).toContain('✖')
     expect(rows[0]).toContain('P2 Release')
@@ -2102,7 +2105,7 @@ test(
     ] as const
 
     for (let index = 0; index < stages.length; index += 1) {
-      const one = stages[index]
+      const one = stages[index]!
       const result = await $.tool.call({
         tool: PRS_TOOL,
         name: one.name,
@@ -2125,7 +2128,7 @@ test(
       const pipeline = `${'●━'.repeat(index)}◉${'━○'.repeat(4 - index)}`
       const shownName =
         'number' in one ? `${one.name} #${one.number}` : one.name
-      const row = rows[0]
+      const row = rows[0]!
 
       expect(rows).toHaveLength(Math.min(index + 1, 2))
       expect(row).toContain(timeAt(BASE_TIME))
@@ -2490,7 +2493,7 @@ test(
     const questionResult = await $.tool.call({
       tool: QUESTIONS_TOOL,
       add: ['Subagent question?'],
-      resolve: [mainQuestions[0].id],
+      resolve: [mainQuestions[0]!.id],
       agentId: 'agent-1',
     } as any)
     const answerResult = await $.tool.call({
