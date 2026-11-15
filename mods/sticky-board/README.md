@@ -153,6 +153,40 @@ requests Claude Code already sends. That is all of it:
   are kept and older ones are deleted. A board too large to keep (over 150,000 characters, where a
   usual one is a few thousand) is not saved.
 
+## What the mod's code does inside Claude Code
+
+The mod is one file of code, `hooks/register.tsx`, that Claude Code runs. It uses Claude Code's own
+storage for this mod and nothing else: no network, no files of yours, no programs. These are all the
+places it hooks into, and what each one does:
+
+- **Starting a session:** adds the `/sticky` command and the board's five tools, brings back the board
+  of a conversation you resumed, and opens the panel.
+- **Ending a session:** saves the board for a resume (see Privacy). After `/clear` or `/resume` it
+  also empties the board.
+- **The `/sticky` command:** opens the board, or pins a note with `/sticky note <text>`. The mod
+  answers this command itself and touches no other command.
+- **Its own five tools** (`mcp__sticky-board__tasks`, `questions`, `answered`, `prs`, `design`): the
+  mod answers these calls itself, because they are the mod's own tools and have nothing else behind
+  them. It does not stand in for any other tool. A call from a subagent is answered "Only the main
+  conversation keeps the sticky board" and changes nothing.
+- **The built-in task tools** (`TaskCreate`, `TaskUpdate`): the call runs unchanged; afterwards the
+  mod copies the task onto the board.
+- **The question dialog** (`AskUserQuestion`): the dialog runs unchanged; the mod puts its questions on
+  the board first and takes off the ones you answered.
+- **Auto mode refusing an action** (`classic.PermissionDenied`): the mod reads which action was refused
+  and shows it under Open questions. The refusal stands; nothing is changed.
+- **A tool having run** (`classic.PostToolUse`, `classic.PostToolUseFailure`): the mod reads which tool
+  ran, to take a refused action off the board once it has gone through. Nothing is changed.
+- **Claude's instructions** (`prompt.compose`): adds the board's section at the end (its text is
+  `RULE` in `hooks/register.tsx`) and leaves the rest as it is.
+- **Your messages** (`prompt.submit`): adds the notes described under Privacy alongside your message.
+  Your own words are never changed. It also brings back the board of a conversation you resumed.
+- **The start and end of Claude's turn** (`turn.start`, `turn.complete`): counts the questions put on
+  the board, and at the end reads the reply's last paragraph for a question left off it. The reply
+  is not changed.
+- **Drawing and scrolling** (`ui.render`, `ui.scroll`): draws its own panel and its own pull-request
+  row, and scrolls the box under the pointer in its own panel.
+
 ## At work: Claude Code managed by your organization
 
 This applies when your organization manages Claude Code on your computer (managed settings), or
@@ -188,8 +222,8 @@ What you can do:
 
 ## What you need
 
-Claude Code 2.1.286 or newer. Recent versions of Claude Code say so when yours is too old;
-`claude --version` shows which you have. A session that has been open for a while runs the version
+Claude Code 2.1.286 or newer. On an older version the board does not load at all, and nothing says
+why; `claude --version` shows which you have. A session that has been open for a while runs the version
 it started on, so restart it after updating.
 
 It works in the terminal and in the Code tab of the Claude desktop app. In VS Code the panel works,
