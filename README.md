@@ -20,9 +20,10 @@ So you scroll back, again and again, and lose your place each time.
 sticky-board pins those things on screen. They stay put while the conversation moves on, and
 Claude keeps them up to date as it works.
 
-![sticky-board in a Claude Code session. Beside the conversation, the board shows boxes for
-tasks, open questions, answered questions and design points. Above the prompt, a strip shows two
-pull requests: one in its CI tests and one live.](media/sticky-board.png)
+![sticky-board in a real Claude Code session. Beside the conversation, the board shows boxes for
+tasks, open questions, answered questions and design points, with older entries scrolled out of
+view. Above the prompt, a strip shows the session's pull requests, all of them
+live.](media/sticky-board.png)
 
 Beside the conversation:
 
