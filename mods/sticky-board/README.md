@@ -159,24 +159,30 @@ The mod is one file of code, `hooks/register.tsx`, that Claude Code runs. It use
 storage for this mod and nothing else: no network, no files of yours, no programs. These are all the
 places it hooks into, and what each one does:
 
-- **Starting a session:** adds the `/sticky` command and the board's five tools, brings back the board
-  of a conversation you resumed, and opens the panel.
-- **Ending a session:** saves the board for a resume (see Privacy). After `/clear` or `/resume` it
-  also empties the board.
-- **The `/sticky` command:** opens the board, or pins a note with `/sticky note <text>`. The mod
-  answers this command itself and touches no other command.
-- **Its own five tools** (`mcp__sticky-board__tasks`, `questions`, `answered`, `prs`, `design`): the
-  mod answers these calls itself, because they are the mod's own tools and have nothing else behind
-  them. It does not stand in for any other tool. A call from a subagent is answered "Only the main
-  conversation keeps the sticky board" and changes nothing.
-- **The built-in task tools** (`TaskCreate`, `TaskUpdate`): the call runs unchanged; afterwards the
-  mod copies the task onto the board.
-- **The question dialog** (`AskUserQuestion`): the dialog runs unchanged; the mod puts its questions on
-  the board first and takes off the ones you answered.
-- **Auto mode refusing an action** (`classic.PermissionDenied`): the mod reads which action was refused
-  and shows it under Open questions. The refusal stands; nothing is changed.
-- **A tool having run** (`classic.PostToolUse`, `classic.PostToolUseFailure`): the mod reads which tool
-  ran, to take a refused action off the board once it has gone through. Nothing is changed.
+- **Starting a session** (`session.start`): adds the `/sticky` command and the board's five tools,
+  brings back the board of a conversation you resumed, and opens the panel.
+- **Ending a session** (`session.end`): saves the board for a resume (see Privacy). After `/clear` or
+  `/resume` it also empties the board.
+- **The `/sticky` command** (`command.run`, for `sticky` only): opens the board, or pins a note with
+  `/sticky note <text>`. The mod answers this command itself and touches no other command.
+- **Its own five tools** (`tool.call`, for `mcp__sticky-board__tasks`, `mcp__sticky-board__questions`,
+  `mcp__sticky-board__answered`, `mcp__sticky-board__prs` and `mcp__sticky-board__design` only): the
+  mod's `tool.call` hook returns the result of these five tools itself, every time they are called,
+  because they are the mod's own tools and have nothing else behind them. It returns a result of its
+  own for no other tool. A call from a subagent is answered "Only the main conversation keeps the
+  sticky board" and changes nothing.
+- **The built-in task tools** (`tool.call`, for `TaskCreate` and `TaskUpdate`): returns what `next`
+  gives back, so the call runs and answers unchanged; afterwards the mod copies the task onto the
+  board.
+- **The question dialog** (`tool.call`, for `AskUserQuestion`): returns what `next` gives back, so the
+  dialog runs and answers unchanged; the mod puts its questions on the board first and takes off the
+  ones you answered.
+- **Auto mode refusing an action** (`classic.PermissionDenied`): the mod reads the refused tool's name
+  and input to show the action under Open questions. What it changes: nothing. It returns what
+  `next` gives back, so the refusal stands as it was.
+- **A tool having run** (`classic.PostToolUse`, `classic.PostToolUseFailure`): the mod reads the tool's
+  name and input to take a refused action off the board once it has gone through. What it changes:
+  nothing. It returns what `next` gives back.
 - **Claude's instructions** (`prompt.compose`): adds the board's section at the end (its text is
   `RULE` in `hooks/register.tsx`) and leaves the rest as it is.
 - **Your messages** (`prompt.submit`): adds the notes described under Privacy alongside your message.
