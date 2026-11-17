@@ -3161,10 +3161,13 @@ test(
     const taskSecond = taskRows.findIndex(row => row.includes('mnopqrstuvwx'))
     const questionLabel = questionRows.findIndex(row => row.includes('Q1'))
     const questionFirst = questionRows.findIndex(row =>
-      row.includes('ABCDEFGHIJKL'),
+      row.includes('ABCDEFGHIJ'),
     )
     const questionSecond = questionRows.findIndex(row =>
-      row.includes('MNOPQRSTUVW?'),
+      row.includes('KLMNOPQRST'),
+    )
+    const questionThird = questionRows.findIndex(row =>
+      row.includes('UVW?'),
     )
 
     expect(taskLabel).toBeGreaterThanOrEqual(0)
@@ -3173,6 +3176,7 @@ test(
     expect(questionLabel).toBeGreaterThanOrEqual(0)
     expect(questionFirst).toBe(questionLabel + 1)
     expect(questionSecond).toBe(questionFirst + 1)
+    expect(questionThird).toBe(questionSecond + 1)
     expect(await ui.find({ type: 'Text', text: longTask })).toBeUndefined()
     expect(
       await ui.find({ type: 'Text', text: longQuestion }),

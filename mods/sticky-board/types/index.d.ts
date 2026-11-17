@@ -8,11 +8,14 @@ export type Tasks = { seq: number; list: Task[] }
 
 // `blocked` marks an action auto mode refused, which the person approves in /permissions; `key`
 // tells that action apart from others of its tool, as the engine's own list of refusals does.
+// `rowId` is the transcript row where it was asked, which a press scrolls back to: absent on a
+// question kept before the board knew it, or picked out of a reply with no text of its own.
 export type Question = {
   id: string
   text: string
   at: number
   blocked?: { tool: string; key: string }
+  rowId?: string
 }
 
 export type Questions = { seq: number; open: Question[] }

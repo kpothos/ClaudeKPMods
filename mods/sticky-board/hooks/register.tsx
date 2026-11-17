@@ -140,6 +140,8 @@ const ORDER: readonly (keyof Offsets)[] = ['tasks', 'questions', 'answers', 'des
 
 type BoxName = keyof Offsets
 
+type Press = { key: string; label: string; run: () => unknown }
+
 type Line = {
   lead: string
   mark: string
@@ -148,7 +150,10 @@ type Line = {
   isDim: boolean
   isBold: boolean
   // A mark the person can press, drawn in the mark's place.
-  press?: { key: string; label: string; run: () => unknown }
+  press?: Press
+  // In a box whose entries carry two marks, the second, drawn after the first; `null` leaves its
+  // column empty, so the text of every row in the box starts in the same column.
+  jump?: Press | null
 }
 
 type BoxSpec = { name: BoxName; title: string; note: string; empty: string; lines: Line[] }
@@ -288,27 +293,51 @@ const share = (needs: readonly number[], total: number): number[] => {
   return rooms
 }
 
-const addTo = (value: Questions, texts: readonly string[], at: number): Questions => {
-  const open = [...value.open]
+const addTo = (
+  value: Questions,
+  texts: readonly string[],
+  at: number,
+  rowId?: string,
+): Questions => {
+  let open = [...value.open]
   let seq = value.seq
 
   for (const raw of texts) {
     const text = raw.trim()
-
     // A refused action worded the same is not this question: it leaves the board on its own terms.
-    if (text !== '' && !open.some(one => one.blocked === undefined && one.text === text)) {
+    const isAsked = (one: Question) => one.blocked === undefined && one.text === text
+
+    if (text === '') {
+      continue
+    }
+
+    if (!open.some(isAsked)) {
       seq += 1
-      open.push({ id: `q${seq}`, text, at })
+      open.push({ id: `q${seq}`, text, at, ...(rowId === undefined ? {} : { rowId }) })
+    } else if (rowId !== undefined) {
+      // NOTE: asked again, a question keeps its label and its ↑ goes to where it was asked last:
+      // a short one such as "OK with that?" is about whatever came just before it.
+      open = open.map(one => (isAsked(one) ? { ...one, rowId } : one))
     }
   }
 
   return { seq, open }
 }
 
-const addQuestions = async ($: EngineInterface, texts: readonly string[]) => {
+const addQuestions = async ($: EngineInterface, texts: readonly string[], rowId?: string) => {
   const at = await $.clock.now()
 
-  return update($, questions, value => addTo(value, texts, at))
+  return update($, questions, value => addTo(value, texts, at, rowId))
+}
+
+// Brings an entry's transcript row back into view; `what` names the entry in the toast when the
+// row is not drawn.
+const scrollBack = async ($: EngineInterface, rowId: string, what: string) => {
+  const moved = await $.ui.scroll({ to: { requestId: rowId }, block: 'center' })
+
+  if (moved.deny !== undefined) {
+    $.ui.toast(`Could not scroll back to that ${what}: ${moved.deny}`)
+  }
 }
 
 // The questions a reply ends on: the sentences of its last paragraph that end with a question mark.
@@ -441,7 +470,8 @@ const keptBoard = (value: unknown): SavedBoard | undefined => {
         /^q[1-9]\d*$/.test(one.id) &&
         typeof one.text === 'string' &&
         isTime(one.at) &&
-        one.blocked === undefined,
+        one.blocked === undefined &&
+        (one.rowId === undefined || typeof one.rowId === 'string'),
       one => Number(String(one.id).slice(1)),
     ),
     answers: keptBox(
@@ -656,6 +686,11 @@ export const register: Register = on => {
   // How many refused actions went on the board since then: they move the question count too, and
   // are not questions the model asked.
   let blockedAdds = 0
+  // This turn's last row of reply text, where a question the board picks out of the reply was asked.
+  let replyRow = ''
+  // Calls whose questions point at the call until its result comes in: the transcript draws a
+  // dismissed dialog under its result's row, not under the call's id, so the ↑ moves there.
+  const awaitingResult = new Set<string>()
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -915,9 +950,11 @@ export const register: Register = on => {
 
   on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
     // On the board before the dialog opens, so a question the person dismisses stays there.
+    awaitingResult.add(e.tool_use_id)
     await addQuestions(
       $,
       e.questions.map(one => one.question),
+      e.tool_use_id,
     )
     const ran = await next(e)
 
@@ -961,6 +998,8 @@ export const register: Register = on => {
         },
         add,
         at,
+        // The call's own row sits beside the reply that asks: a press on the question scrolls back to it.
+        e.tool_use_id,
       ),
     )
     const asked = open.filter(one => one.blocked === undefined)
@@ -995,7 +1034,15 @@ export const register: Register = on => {
       added = 1
       const seq = value.seq + 1
 
-      return { seq, open: [...value.open, { id: `q${seq}`, text, at, blocked }] }
+      // NOTE: never seen live, as a refusal cannot be made on purpose: like a dismissed dialog's,
+      // the refused call's row may be drawn under its result's id, so the ↑ moves there if that
+      // result comes in after this; a press that finds no row says so in a toast.
+      awaitingResult.add(e.tool_use_id)
+
+      return {
+        seq,
+        open: [...value.open, { id: `q${seq}`, text, at, blocked, rowId: e.tool_use_id }],
+      }
     })
     blockedAdds += added
 
@@ -1293,6 +1340,43 @@ export const register: Register = on => {
 
     seqAtTurnStart = (await read($, questions)).seq
     blockedAdds = 0
+    replyRow = ''
+
+    return next(e)
+  })
+
+  // Each block of a reply is a row of its own, under the id the transcript draws it by: a press
+  // scrolls there. Every row of the conversation passes through here, so only the result row of a
+  // call the board waits on is waited for.
+  on('session.append', async ($, e, next) => {
+    if (
+      e.agentId === undefined &&
+      e.door === 'response' &&
+      e.message.content.some(
+        block => block.type === 'text' && typeof block.text === 'string' && block.text.trim() !== '',
+      )
+    ) {
+      replyRow = e.uuid
+    }
+
+    if (awaitingResult.size > 0 && e.door === 'tool-result') {
+      for (const block of e.message.content) {
+        const callId = block.type === 'tool_result' ? block.tool_use_id : undefined
+
+        if (typeof callId === 'string' && awaitingResult.delete(callId)) {
+          const isThere = (one: Question) => one.rowId === callId
+
+          // Read first: an answered dialog's questions have left already, and a write for nothing
+          // draws the board again.
+          if ((await read($, questions)).open.some(isThere)) {
+            await update($, questions, value => ({
+              ...value,
+              open: value.open.map(one => (isThere(one) ? { ...one, rowId: e.uuid } : one)),
+            }))
+          }
+        }
+      }
+    }
 
     return next(e)
   })
@@ -1302,7 +1386,7 @@ export const register: Register = on => {
 
     // The check behind the rule: a reply that ends on a question nobody recorded still reaches the board.
     if (isMainAnswer && (await read($, questions)).seq - blockedAdds === seqAtTurnStart) {
-      await addQuestions($, closingQuestions(e.answer))
+      await addQuestions($, closingQuestions(e.answer), replyRow === '' ? undefined : replyRow)
     }
 
     return next(e)
@@ -1409,30 +1493,42 @@ export const register: Register = on => {
           }),
         ),
       )
-    // Newest first, so a question just asked shows without scrolling.
+    // Newest first, so a question just asked shows without scrolling. 2: the ↑ and the space after it.
     const questionLines = [...open].reverse().flatMap(question =>
-      wrap(`${question.id.toUpperCase()} ${question.text}`, textColumns).map(
-        (text, index): Line => ({
-          lead: index === 0 ? clock(question.at) : '',
-          mark: ' ',
-          color: 'text',
-          text,
-          isDim: false,
-          isBold: false,
-          ...(index === 0
-            ? {
-                press: {
-                  key: `answered-${question.id}`,
-                  label: '○',
-                  run: () =>
-                    update($, questions, value => ({
-                      ...value,
-                      open: value.open.filter(one => one.id !== question.id),
-                    })),
-                },
-              }
-            : {}),
-        }),
+      wrap(`${question.id.toUpperCase()} ${question.text}`, Math.max(1, textColumns - 2)).map(
+        (text, index): Line => {
+          const { rowId } = question
+
+          return {
+            lead: index === 0 ? clock(question.at) : '',
+            mark: ' ',
+            color: 'text',
+            text,
+            isDim: false,
+            isBold: false,
+            jump:
+              index === 0 && rowId !== undefined
+                ? {
+                    key: `asked-${question.id}`,
+                    label: '↑',
+                    run: () => scrollBack($, rowId, 'question'),
+                  }
+                : null,
+            ...(index === 0
+              ? {
+                  press: {
+                    key: `answered-${question.id}`,
+                    label: '○',
+                    run: () =>
+                      update($, questions, value => ({
+                        ...value,
+                        open: value.open.filter(one => one.id !== question.id),
+                      })),
+                  },
+                }
+              : {}),
+          }
+        },
       ),
     )
     const answerLines = [...answered].reverse().flatMap(one => [
@@ -1474,13 +1570,7 @@ export const register: Register = on => {
                 press: {
                   key: `jump-${one.rowId}`,
                   label: '↑',
-                  run: async () => {
-                    const moved = await $.ui.scroll({ to: { requestId: one.rowId }, block: 'center' })
-
-                    if (moved.deny !== undefined) {
-                      $.ui.toast(`Could not scroll back to that answer: ${moved.deny}`)
-                    }
-                  },
+                  run: () => scrollBack($, one.rowId, 'answer'),
                 },
               }
             : {}),
@@ -1548,7 +1638,7 @@ export const register: Register = on => {
       {
         name: 'questions',
         title: 'Open questions',
-        note: open.length === 0 ? '' : `${open.length} · press ○ when answered`,
+        note: open.length === 0 ? '' : `${open.length} · ○ answered · ↑ scroll back`,
         empty: 'No open questions.',
         lines: questionLines,
       },
@@ -1660,6 +1750,16 @@ export const register: Register = on => {
                       key={line.press.key}
                       label={line.press.label}
                       onPress={line.press.run}
+                    />
+                  )}
+                  {line.jump !== undefined && <Text>{' '}</Text>}
+                  {line.jump === null && <Text>{' '}</Text>}
+                  {line.jump !== undefined && line.jump !== null && (
+                    <Button
+                      plain
+                      key={line.jump.key}
+                      label={line.jump.label}
+                      onPress={line.jump.run}
                     />
                   )}
                   <Text dimColor={line.isDim} bold={line.isBold} wrap="truncate-end">

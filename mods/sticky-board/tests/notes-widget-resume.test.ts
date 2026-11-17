@@ -914,6 +914,7 @@ test(
           id: 'q1',
           text: 'Keep this ordinary question?',
           at: BASE_TIME,
+          rowId: expect.any(String),
         },
       ],
     })

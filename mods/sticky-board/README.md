@@ -35,9 +35,9 @@ Beside the conversation:
 │ 14:05 ✔ T1 Read the current checkout code      │
 ╰────────────────────────────────────────────────╯
 ╭────────────────────────────────────────────────╮
-│ Open questions 1 · press ○ when answered       │
-│ 14:05 ○ Q1 Should a saved cart expire after 30 │
-│         days?                                  │
+│ Open questions 1 · ○ answered · ↑ scroll back  │
+│ 14:05 ○ ↑ Q1 Should a saved cart expire after  │
+│           30 days?                             │
 ╰────────────────────────────────────────────────╯
 ╭────────────────────────────────────────────────╮
 │ Answered 1 · ○ done · ↑ scroll back            │
@@ -77,7 +77,8 @@ In the panel, each box with its own scrolling list:
 - **Open questions.** Claude adds the questions it leaves for you and takes them off once you
   answer. A question you dismiss in a question dialog stays on the board. If Claude ends a reply
   on a question without adding it, the mod adds it. Press the `○` beside a question to take it off
-  yourself. When auto mode blocks something Claude tried to do, it shows up here too, so you know
+  yourself, or the `↑` to scroll the conversation back to where Claude asked it (fullscreen mode).
+  When auto mode blocks something Claude tried to do, it shows up here too, so you know
   to approve it in `/permissions` (under Recently denied). It comes off by itself once that action
   goes through, or press its `○`.
 - **Answered.** The questions you asked, each with a short version of Claude's answer, so the
@@ -146,7 +147,8 @@ requests Claude Code already sends. That is all of it:
   The `/sticky note` command you type is kept in the conversation like any other command, so Claude
   can read that.
 - **Claude's replies.** When a reply ends on a question that Claude did not put on the board, the
-  mod reads the reply's last paragraph and adds the question itself.
+  mod reads the reply's last paragraph and adds the question itself. So that the question's `↑` can
+  find the reply, the mod notes which row of the conversation holds the reply's text: its id only.
 - **What it keeps on your computer.** When a conversation ends (an exit, a `/clear`, a `/resume`),
   its board is saved in Claude Code's own storage for this mod, a file under `~/.claude/plugins/`,
   so that resuming the conversation brings it back. The boards of the 20 most recent conversations
@@ -190,8 +192,14 @@ places it hooks into, and what each one does:
 - **The start and end of Claude's turn** (`turn.start`, `turn.complete`): counts the questions put on
   the board, and at the end reads the reply's last paragraph for a question left off it. The reply
   is not changed.
+- **Each row added to the conversation** (`session.append`): looks at whether the row is Claude's
+  reply with text in it and, if so, keeps the row's id until the turn ends, for the `↑` of a
+  question picked out of that reply. For a question from a question dialog or a refused action, it
+  also notes the id of the row with that call's outcome, which is where the conversation shows it.
+  What it changes: nothing. It returns what `next` gives back, so every row is kept as it was.
 - **Drawing and scrolling** (`ui.render`, `ui.scroll`): draws its own panel and its own pull-request
-  row, and scrolls the box under the pointer in its own panel.
+  row, and scrolls the box under the pointer in its own panel. A press on a `↑` scrolls the
+  conversation back to that entry's row.
 
 ## At work: Claude Code managed by your organization
 
