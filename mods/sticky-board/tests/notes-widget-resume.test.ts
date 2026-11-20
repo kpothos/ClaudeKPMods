@@ -289,7 +289,7 @@ test(
       type: 'Box',
       props: { borderStyle: 'round', borderColor: 'warning' },
     })
-    expect(notesText).toContain(' Notes  2 · press ○ to remove')
+    expect(notesText).toContain(' Notes  2 · press ( ) to remove')
     expect(notesText.indexOf('N2 newer note')).toBeGreaterThanOrEqual(0)
     expect(notesText.indexOf('N2 newer note')).toBeLessThan(
       notesText.indexOf('N1 older note'),
@@ -297,7 +297,7 @@ test(
     expect(await dock.find({ key: 'note-1' })).toMatchObject({
       type: 'Button',
       key: 'note-1',
-      props: { label: '○' },
+      props: { label: '( )' },
     })
 
     await dock.press({ key: 'note-2' })
@@ -350,7 +350,7 @@ test(
     const notesBox = boxNamed(await ui.drawn(), 'Notes')
 
     expect(textOf(notesBox)).toContain(
-      ' Notes  30 · press ○ to remove',
+      ' Notes  30 · press ( ) to remove',
     )
     expect(await ui.find({ key: 'note-1' })).toBeUndefined()
     expect(await ui.find({ key: 'note-2' })).toBeDefined()

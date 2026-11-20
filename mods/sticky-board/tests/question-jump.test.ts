@@ -405,7 +405,7 @@ test(
       type: 'Button',
       props: {
         key: 'asked-q1',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
     expect(
@@ -414,7 +414,7 @@ test(
       type: 'Button',
       props: {
         key: 'asked-q2',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
     expect(
@@ -423,7 +423,7 @@ test(
       type: 'Button',
       props: {
         key: 'asked-q3',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
 
@@ -482,7 +482,7 @@ test(
       type: 'Button',
       props: {
         key: 'asked-q1',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
 
@@ -629,7 +629,7 @@ test(
       type: 'Button',
       props: {
         key: 'asked-q1',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
 
@@ -685,7 +685,7 @@ test(
       type: 'Button',
       props: {
         key: 'asked-q1',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
 
@@ -736,7 +736,7 @@ test(
       type: 'Button',
       props: {
         key: 'asked-q1',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
 
@@ -787,7 +787,7 @@ test(
       type: 'Button',
       props: {
         key: 'asked-q1',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
 
@@ -938,7 +938,7 @@ test(
         type: 'Button',
         props: {
           key: `answered-q${n}`,
-          label: '○',
+          label: '( )',
         },
       })
 
@@ -992,7 +992,7 @@ test(
       type: 'Button',
       props: {
         key: 'asked-q1',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
 
@@ -1051,7 +1051,7 @@ test(
       type: 'Button',
       props: {
         key: 'answered-q1',
-        label: '○',
+        label: '( )',
       },
     })
 
@@ -1123,7 +1123,7 @@ test(
       type: 'Button',
       props: {
         key: 'asked-q1',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
     expect(
@@ -1213,7 +1213,7 @@ test(
       type: 'Button',
       props: {
         key: 'asked-q1',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
     expect(
@@ -1222,7 +1222,7 @@ test(
       type: 'Button',
       props: {
         key: 'asked-q2',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
     expect(
@@ -1280,7 +1280,7 @@ test(
       type: 'Button',
       props: {
         key: 'asked-q1',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
     expect(
@@ -1292,7 +1292,7 @@ test(
       type: 'Button',
       props: {
         key: 'answered-q2',
-        label: '○',
+        label: '( )',
       },
     })
 
@@ -1358,7 +1358,7 @@ test(
 test(
   'question rows reserve the jump column and align wrapped continuations',
   async ($: any, on: any) => {
-    // Red if register.tsx changes the question wrap width from `textColumns - 2` to `textColumns`.
+    // Red if register.tsx changes the question wrap width from `pressColumns - 2` to `pressColumns`.
     const writes = captureQuestionWrites(on)
     setup(on)
     await clearBoard($)
@@ -1407,47 +1407,59 @@ test(
     const stamp = timeAt(BASE_TIME)
 
     expect(rows[0]).toBe(
-      ' Open questions  2 · ○ answered · ↑ scroll back',
+      ' Open questions  2 · ( ) answered · ↑ scroll back',
     )
     expect(
-      rows.find(row => row.includes('Q1 Ask now')),
-    ).toBe(`${stamp} ○ ↑ Q1 Ask now`)
+      rows.find(row => row.includes('Q1 Ask')),
+    ).toBe(`${stamp} ( ) ↑ Q1 Ask`)
     expect(
-      rows.find(row => row.includes('ABCDEFGHIJ')),
-    ).toBe(`${' '.repeat(10)}ABCDEFGHIJ`)
+      rows.find(row => row.includes('now')),
+    ).toBe(`${' '.repeat(12)}now`)
     expect(
-      rows.find(row => row.includes('KLMNOPQ?')),
-    ).toBe(`${' '.repeat(10)}KLMNOPQ?`)
+      rows.find(row => row.includes('ABCDEFGH')),
+    ).toBe(`${' '.repeat(12)}ABCDEFGH`)
+    expect(
+      rows.find(row => row.includes('IJKLMNOP')),
+    ).toBe(`${' '.repeat(12)}IJKLMNOP`)
+    expect(
+      rows.find(row => row.includes('Q?')),
+    ).toBe(`${' '.repeat(12)}Q?`)
 
     expect(
-      rows.find(row => row.includes('Q2 Ask too')),
-    ).toBe(`${stamp} ○   Q2 Ask too`)
+      rows.find(row => row.includes('Q2 Ask')),
+    ).toBe(`${stamp} ( )   Q2 Ask`)
     expect(
-      rows.find(row => row.includes('abcdefghij')),
-    ).toBe(`${' '.repeat(10)}abcdefghij`)
+      rows.find(row => row.includes('too')),
+    ).toBe(`${' '.repeat(12)}too`)
     expect(
-      rows.find(row => row.includes('klmnopq?')),
-    ).toBe(`${' '.repeat(10)}klmnopq?`)
+      rows.find(row => row.includes('abcdefgh')),
+    ).toBe(`${' '.repeat(12)}abcdefgh`)
+    expect(
+      rows.find(row => row.includes('ijklmnop')),
+    ).toBe(`${' '.repeat(12)}ijklmnop`)
+    expect(
+      rows.find(row => row.includes('q?')),
+    ).toBe(`${' '.repeat(12)}q?`)
 
     expect(
-      rowButton(tree, 1, 'Q1 Ask now', 'asked-'),
+      rowButton(tree, 1, 'Q1 Ask', 'asked-'),
     ).toMatchObject({
       type: 'Button',
       props: {
         key: 'asked-q1',
-        label: '↑',
+        label: ' ↑ ',
       },
     })
     expect(
-      rowButton(tree, 1, 'Q2 Ask too', 'asked-'),
+      rowButton(tree, 1, 'Q2 Ask', 'asked-'),
     ).toBeUndefined()
     expect(
-      (rowNodeWith(tree, 1, 'ABCDEFGHIJ')?.children ?? []).filter(
+      (rowNodeWith(tree, 1, 'ABCDEFGH')?.children ?? []).filter(
         (child: any) => child?.type === 'Button',
       ),
     ).toHaveLength(0)
     expect(
-      (rowNodeWith(tree, 1, 'abcdefghij')?.children ?? []).filter(
+      (rowNodeWith(tree, 1, 'abcdefgh')?.children ?? []).filter(
         (child: any) => child?.type === 'Button',
       ),
     ).toHaveLength(0)

@@ -278,7 +278,7 @@ test(
     let rows = boxRows(tree, 1)
 
     expect(rows[0]).toBe(
-      ' Open questions  2 · ○ answered · ↑ scroll back',
+      ' Open questions  2 · ( ) answered · ↑ scroll back',
     )
     expect(fromLabel(rows[1] ?? '', 'Q2')).toBe(`Q2 ${firstBlock}`)
     expect(fromLabel(rows[2] ?? '', 'Q1')).toBe(
@@ -311,7 +311,7 @@ test(
     rows = boxRows(tree, 1)
 
     expect(rows[0]).toBe(
-      ' Open questions  2 · ○ answered · ↑ scroll back',
+      ' Open questions  2 · ( ) answered · ↑ scroll back',
     )
     expect(fromLabel(rows[1] ?? '', 'Q3')).toBe(`Q3 ${secondBlock}`)
     expect(fromLabel(rows[2] ?? '', 'Q1')).toBe(
@@ -350,7 +350,7 @@ test(
     const rows = boxRows(tree, 1)
 
     expect(rows[0]).toBe(
-      ' Open questions  1 · ○ answered · ↑ scroll back',
+      ' Open questions  1 · ( ) answered · ↑ scroll back',
     )
     expect(rows.filter(row => row.includes(blocked))).toHaveLength(1)
     expect(fromLabel(rowWith(tree, 1, blocked), 'Q1')).toBe(
@@ -445,7 +445,7 @@ test(
     const tree = await ui.drawn()
 
     expect(boxRows(tree, 1)[0]).toBe(
-      ' Open questions  7 · ○ answered · ↑ scroll back',
+      ' Open questions  7 · ( ) answered · ↑ scroll back',
     )
 
     for (const [index, text] of expected.entries()) {
@@ -593,7 +593,7 @@ test(
     const button = rowButton(tree, 1, blocked, 'answered-')
 
     expect(button?.props?.key).toBe('answered-q1')
-    expect(button?.props?.label).toBe('○')
+    expect(button?.props?.label).toBe('( )')
 
     await ui.press({ key: 'answered-q1' })
 
@@ -724,7 +724,7 @@ test(
     const tree = await ui.drawn()
 
     expect(boxRows(tree, 1)[0]).toBe(
-      ' Open questions  1 · ○ answered · ↑ scroll back',
+      ' Open questions  1 · ( ) answered · ↑ scroll back',
     )
     expect(fromLabel(rowWith(tree, 1, blocked), 'Q1')).toBe(
       `Q1 ${blocked}`,
@@ -849,7 +849,7 @@ test(
     const tree = await ui.drawn()
 
     expect(boxRows(tree, 1)[0]).toBe(
-      ' Open questions  1 · ○ answered · ↑ scroll back',
+      ' Open questions  1 · ( ) answered · ↑ scroll back',
     )
     expect(fromLabel(rowWith(tree, 1, blocked), 'Q1')).toBe(
       `Q1 ${blocked}`,
@@ -1010,7 +1010,7 @@ test(
     const tree = await ui.drawn()
 
     expect(boxRows(tree, 1)[0]).toBe(
-      ' Open questions  2 · ○ answered · ↑ scroll back',
+      ' Open questions  2 · ( ) answered · ↑ scroll back',
     )
     expect(fromLabel(rowWith(tree, 1, first), 'Q1')).toBe(
       `Q1 ${first}`,

@@ -1123,7 +1123,7 @@ test(
     const rows = boxRows(tree, 2).join('\n')
 
     expect(answeredText).toContain(
-      ' Answered  2 · ○ done · ↑ scroll back',
+      ' Answered  2 · ( ) done · ↑ scroll back',
     )
     expect(answeredText).not.toContain('Use Postgres.')
     expect(rowWith(tree, 2, 'How should data be stored?')).toContain(
@@ -1154,9 +1154,9 @@ test(
     )
     const replacedJump = rowButton(tree, 2, 'Use SQLite.', 'jump-')
     expect(replacedDone).toBeDefined()
-    expect(replacedDone.props.label).toBe('○')
+    expect(replacedDone.props.label).toBe('( )')
     expect(replacedJump).toBeDefined()
-    expect(replacedJump.props.label).toBe('↑')
+    expect(replacedJump.props.label).toBe(' ↑ ')
 
     const replacedRowId = replacedDone.props.key.slice('done-'.length)
     expect(replacedJump.props.key).toBe('jump-' + replacedRowId)
@@ -1189,15 +1189,15 @@ test(
     const answerBox = borderedBoxes(tree)[2]
 
     expect(textOf(answerBox)).toContain(
-      ' Answered  1 · ○ done · ↑ scroll back',
+      ' Answered  1 · ( ) done · ↑ scroll back',
     )
 
     const done = rowButton(tree, 2, 'A1', 'done-')
-    const jump = rowButton(tree, 2, 'abcdefghijkl', 'jump-')
+    const jump = rowButton(tree, 2, 'abcdefghij', 'jump-')
     expect(done).toBeDefined()
-    expect(done.props.label).toBe('○')
+    expect(done.props.label).toBe('( )')
     expect(jump).toBeDefined()
-    expect(jump.props.label).toBe('↑')
+    expect(jump.props.label).toBe(' ↑ ')
     expect(
       (await ui.findAll({ type: 'Button' })).filter(
         (button: { key?: string }) =>
@@ -1209,13 +1209,13 @@ test(
     const rowId = done.props.key.slice('done-'.length)
     expect(jump.props.key).toBe('jump-' + rowId)
     expect(rowButton(tree, 2, 'A1', 'jump-')).toBeUndefined()
-    expect(rowButton(tree, 2, 'ABCDEFGHIJKL', 'done-')).toBeUndefined()
-    expect(rowButton(tree, 2, 'ABCDEFGHIJKL', 'jump-')).toBeUndefined()
-    expect(rowButton(tree, 2, 'MNO?', 'done-')).toBeUndefined()
-    expect(rowButton(tree, 2, 'MNO?', 'jump-')).toBeUndefined()
-    expect(rowButton(tree, 2, 'abcdefghijkl', 'done-')).toBeUndefined()
-    expect(rowButton(tree, 2, 'mnop.', 'done-')).toBeUndefined()
-    expect(rowButton(tree, 2, 'mnop.', 'jump-')).toBeUndefined()
+    expect(rowButton(tree, 2, 'ABCDEFGHIJ', 'done-')).toBeUndefined()
+    expect(rowButton(tree, 2, 'ABCDEFGHIJ', 'jump-')).toBeUndefined()
+    expect(rowButton(tree, 2, 'KLMNO?', 'done-')).toBeUndefined()
+    expect(rowButton(tree, 2, 'KLMNO?', 'jump-')).toBeUndefined()
+    expect(rowButton(tree, 2, 'abcdefghij', 'done-')).toBeUndefined()
+    expect(rowButton(tree, 2, 'klmnop.', 'done-')).toBeUndefined()
+    expect(rowButton(tree, 2, 'klmnop.', 'jump-')).toBeUndefined()
 
     await ui.unmount()
   },
@@ -1266,7 +1266,7 @@ test(
     tree = await ui.drawn()
     let answeredText = textOf(borderedBoxes(tree)[2])
     expect(answeredText).toContain(
-      ' Answered  1 · ○ done · ↑ scroll back',
+      ' Answered  1 · ( ) done · ↑ scroll back',
     )
     expect(answeredText).toContain('A1 Older answered question?')
     expect(answeredText).toContain('Older answer.')
@@ -1345,7 +1345,7 @@ test(
     let all = textOf(tree)
 
     expect(borderedBoxes(tree)).toHaveLength(1)
-    expect(all).toContain(' Answered  30 · ○ done · ↑ scroll back')
+    expect(all).toContain(' Answered  30 · ( ) done · ↑ scroll back')
     expect(all).toContain('A31 Question 31?')
     expect(all.indexOf('Question 31?')).toBeGreaterThanOrEqual(0)
     expect(all.indexOf('Question 30?')).toBeGreaterThanOrEqual(0)
@@ -1355,7 +1355,7 @@ test(
 
     const newestJump = rowButton(tree, 0, 'Answer 31.', 'jump-')
     expect(newestJump).toBeDefined()
-    expect(newestJump.props.label).toBe('↑')
+    expect(newestJump.props.label).toBe(' ↑ ')
 
     await scrollBoard($, 1000, 10)
     tree = await ui.drawn()
@@ -3068,7 +3068,7 @@ test(
     expect(textOf(boxes[0])).toContain('Tasks')
     expect(textOf(boxes[0])).toContain('T1 Inline task')
     expect(textOf(boxes[1])).toContain('Answered')
-    expect(textOf(boxes[1])).toContain('A1 Inline answered question?')
+    expect(textOf(boxes[1])).toContain('A1 Inline answered          question?')
     expect(textOf(tree)).not.toContain('Open questions')
     expect(textOf(tree)).not.toContain('Design points')
     expect(textOf(tree)).not.toContain('Pull requests')
@@ -3161,13 +3161,13 @@ test(
     const taskSecond = taskRows.findIndex(row => row.includes('mnopqrstuvwx'))
     const questionLabel = questionRows.findIndex(row => row.includes('Q1'))
     const questionFirst = questionRows.findIndex(row =>
-      row.includes('ABCDEFGHIJ'),
+      row.includes('ABCDEFGH'),
     )
     const questionSecond = questionRows.findIndex(row =>
-      row.includes('KLMNOPQRST'),
+      row.includes('IJKLMNOP'),
     )
     const questionThird = questionRows.findIndex(row =>
-      row.includes('UVW?'),
+      row.includes('QRSTUVW?'),
     )
 
     expect(taskLabel).toBeGreaterThanOrEqual(0)

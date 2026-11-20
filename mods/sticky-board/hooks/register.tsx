@@ -23,6 +23,14 @@ import type {
 
 // Columns a row spends before its text: "16:21 ", the mark and a space.
 const LEAD = 8
+// The marks the person presses, each three cells wide: a click lands on one cell, and a mark one
+// cell wide was too small to hit.
+const CHECK = '( )'
+const JUMP = ' ↑ '
+// The same three cells left empty, on the rows of those boxes that carry no mark.
+const NO_MARK = '   '
+// Columns a three-cell mark takes beyond the one LEAD counts.
+const WIDE = 2
 // Rows a box spends beside its list: the border's two and the title.
 const CHROME = 3
 // The most rows the board takes above the prompt, where a taller one crowds the transcript.
@@ -151,8 +159,9 @@ type Line = {
   isBold: boolean
   // A mark the person can press, drawn in the mark's place.
   press?: Press
-  // In a box whose entries carry two marks, the second, drawn after the first; `null` leaves its
-  // column empty, so the text of every row in the box starts in the same column.
+  // In a box whose entries carry two marks, the second, drawn after the first with its own space on
+  // each side; `null` leaves its columns empty, so the text of every row in the box starts in the
+  // same column.
   jump?: Press | null
 }
 
@@ -1493,15 +1502,18 @@ export const register: Register = on => {
           }),
         ),
       )
-    // Newest first, so a question just asked shows without scrolling. 2: the ↑ and the space after it.
+    // The boxes whose entries carry a mark to press spend its extra columns too.
+    const pressColumns = Math.max(1, textColumns - WIDE)
+    // Newest first, so a question just asked shows without scrolling. 2: the ↑ beside the mark fills
+    // three cells, where the space before the text is one.
     const questionLines = [...open].reverse().flatMap(question =>
-      wrap(`${question.id.toUpperCase()} ${question.text}`, Math.max(1, textColumns - 2)).map(
+      wrap(`${question.id.toUpperCase()} ${question.text}`, Math.max(1, pressColumns - 2)).map(
         (text, index): Line => {
           const { rowId } = question
 
           return {
             lead: index === 0 ? clock(question.at) : '',
-            mark: ' ',
+            mark: NO_MARK,
             color: 'text',
             text,
             isDim: false,
@@ -1510,7 +1522,7 @@ export const register: Register = on => {
               index === 0 && rowId !== undefined
                 ? {
                     key: `asked-${question.id}`,
-                    label: '↑',
+                    label: JUMP,
                     run: () => scrollBack($, rowId, 'question'),
                   }
                 : null,
@@ -1518,7 +1530,7 @@ export const register: Register = on => {
               ? {
                   press: {
                     key: `answered-${question.id}`,
-                    label: '○',
+                    label: CHECK,
                     run: () =>
                       update($, questions, value => ({
                         ...value,
@@ -1532,10 +1544,10 @@ export const register: Register = on => {
       ),
     )
     const answerLines = [...answered].reverse().flatMap(one => [
-      ...wrap(`A${one.n} ${one.question}`, textColumns).map(
+      ...wrap(`A${one.n} ${one.question}`, pressColumns).map(
         (text, index): Line => ({
           lead: index === 0 ? clock(one.at) : '',
-          mark: ' ',
+          mark: NO_MARK,
           color: 'text',
           text,
           isDim: false,
@@ -1545,7 +1557,7 @@ export const register: Register = on => {
             ? {
                 press: {
                   key: `done-${one.rowId}`,
-                  label: '○',
+                  label: CHECK,
                   run: () =>
                     update($, answers, value => ({
                       ...value,
@@ -1556,10 +1568,10 @@ export const register: Register = on => {
             : {}),
         }),
       ),
-      ...wrap(one.answer, textColumns).map(
+      ...wrap(one.answer, pressColumns).map(
         (text, index): Line => ({
           lead: '',
-          mark: ' ',
+          mark: NO_MARK,
           color: 'text',
           text,
           isDim: false,
@@ -1569,7 +1581,7 @@ export const register: Register = on => {
             ? {
                 press: {
                   key: `jump-${one.rowId}`,
-                  label: '↑',
+                  label: JUMP,
                   run: () => scrollBack($, one.rowId, 'answer'),
                 },
               }
@@ -1597,10 +1609,10 @@ export const register: Register = on => {
 
     // Newest first, as with the questions.
     const noteLines = [...pinned].reverse().flatMap(one =>
-      wrap(`N${one.n} ${one.text}`, textColumns).map(
+      wrap(`N${one.n} ${one.text}`, pressColumns).map(
         (text, index): Line => ({
           lead: index === 0 ? clock(one.at) : '',
-          mark: ' ',
+          mark: NO_MARK,
           color: 'text',
           text,
           isDim: false,
@@ -1609,7 +1621,7 @@ export const register: Register = on => {
             ? {
                 press: {
                   key: `note-${one.n}`,
-                  label: '○',
+                  label: CHECK,
                   run: () =>
                     update($, notes, value => ({
                       ...value,
@@ -1638,14 +1650,14 @@ export const register: Register = on => {
       {
         name: 'questions',
         title: 'Open questions',
-        note: open.length === 0 ? '' : `${open.length} · ○ answered · ↑ scroll back`,
+        note: open.length === 0 ? '' : `${open.length} · ${CHECK} answered · ↑ scroll back`,
         empty: 'No open questions.',
         lines: questionLines,
       },
       {
         name: 'answers',
         title: 'Answered',
-        note: answered.length === 0 ? '' : `${answered.length} · ○ done · ↑ scroll back`,
+        note: answered.length === 0 ? '' : `${answered.length} · ${CHECK} done · ↑ scroll back`,
         empty: 'No answered questions yet.',
         lines: answerLines,
       },
@@ -1662,7 +1674,7 @@ export const register: Register = on => {
       {
         name: 'notes',
         title: 'Notes',
-        note: pinned.length === 0 ? '' : `${pinned.length} · press ○ to remove`,
+        note: pinned.length === 0 ? '' : `${pinned.length} · press ${CHECK} to remove`,
         empty: 'No notes.',
         lines: noteLines,
       },
@@ -1752,8 +1764,7 @@ export const register: Register = on => {
                       onPress={line.press.run}
                     />
                   )}
-                  {line.jump !== undefined && <Text>{' '}</Text>}
-                  {line.jump === null && <Text>{' '}</Text>}
+                  {line.jump === null && <Text>{NO_MARK}</Text>}
                   {line.jump !== undefined && line.jump !== null && (
                     <Button
                       plain
@@ -1763,8 +1774,7 @@ export const register: Register = on => {
                     />
                   )}
                   <Text dimColor={line.isDim} bold={line.isBold} wrap="truncate-end">
-                    {' '}
-                    {line.text}
+                    {`${line.jump === undefined ? ' ' : ''}${line.text}`}
                   </Text>
                 </Box>
               ))}

@@ -27,37 +27,36 @@ live.](https://raw.githubusercontent.com/kpothos/ClaudeKPMods/main/media/sticky-
 Beside the conversation:
 
 ```
-╭────────────────────────────────────────────────╮
-│ Tasks 3 open, 1 done                           │
-│ 14:05 ◼ T2 Agree the design for saved carts    │
-│ 14:05 ◻ T3 Add the saved-cart table            │
-│ 14:05 ◻ T4 Run every test suite                │
-│ 14:05 ✔ T1 Read the current checkout code      │
-╰────────────────────────────────────────────────╯
-╭────────────────────────────────────────────────╮
-│ Open questions 1 · ○ answered · ↑ scroll back  │
-│ 14:05 ○ ↑ Q1 Should a saved cart expire after  │
-│           30 days?                             │
-╰────────────────────────────────────────────────╯
-╭────────────────────────────────────────────────╮
-│ Answered 1 · ○ done · ↑ scroll back            │
-│ 14:05 ○ A1 Why not keep carts in the browser?  │
-│       ↑ They would be lost when the person     │
-│         changes device, so they are kept on    │
-│         the server.                            │
-╰────────────────────────────────────────────────╯
-╭────────────────────────────────────────────────╮
-│ Design points 1 settled, 2 to go               │
-│ 14:05 ✔ D1 Where carts are kept                │
-│         Decision: On the server, one row per   │
-│         cart                                   │
-│ 14:05 ◼ D2 When a cart expires                 │
-│ 14:05 ◻ D3 What a guest sees                   │
-╰────────────────────────────────────────────────╯
-╭────────────────────────────────────────────────╮
-│ Notes 1 · press ○ to remove                    │
-│ 14:06 ○ N1 Ask the team about the guest limit  │
-╰────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────╮
+│ Tasks 3 open, 1 done                               │
+│ 14:05 ◼ T2 Agree the design for saved carts        │
+│ 14:05 ◻ T3 Add the saved-cart table                │
+│ 14:05 ◻ T4 Run every test suite                    │
+│ 14:05 ✔ T1 Read the current checkout code          │
+╰────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────╮
+│ Open questions 1 · ( ) answered · ↑ scroll back    │
+│ 14:05 ( ) ↑ Q1 Should a saved cart expire after 30 │
+│             days?                                  │
+╰────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────╮
+│ Answered 1 · ( ) done · ↑ scroll back              │
+│ 14:05 ( ) A1 Why not keep carts in the browser?    │
+│        ↑  They would be lost when the person       │
+│           changes device, so they are kept on the  │
+│           server.                                  │
+╰────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────╮
+│ Design points 1 settled, 2 to go                   │
+│ 14:05 ✔ D1 Where carts are kept                    │
+│         Decision: On the server, one row per cart  │
+│ 14:05 ◼ D2 When a cart expires                     │
+│ 14:05 ◻ D3 What a guest sees                       │
+╰────────────────────────────────────────────────────╯
+╭────────────────────────────────────────────────────╮
+│ Notes 1 · press ( ) to remove                      │
+│ 14:06 ( ) N1 Ask the team about the guest limit    │
+╰────────────────────────────────────────────────────╯
 ```
 
 And across the window, above the prompt:
@@ -76,20 +75,20 @@ In the panel, each box with its own scrolling list:
   built-in task tools, in sessions that have them, show up too.
 - **Open questions.** Claude adds the questions it leaves for you and takes them off once you
   answer. A question you dismiss in a question dialog stays on the board. If Claude ends a reply
-  on a question without adding it, the mod adds it. Press the `○` beside a question to take it off
+  on a question without adding it, the mod adds it. Press the `( )` beside a question to take it off
   yourself, or the `↑` to scroll the conversation back to where Claude asked it (fullscreen mode).
   When auto mode blocks something Claude tried to do, it shows up here too, so you know
   to approve it in `/permissions` (under Recently denied). It comes off by itself once that action
-  goes through, or press its `○`.
+  goes through, or press its `( )`.
 - **Answered.** The questions you asked, each with a short version of Claude's answer, so the
-  answer stays in view after the full reply has scrolled away. Press `○` to check an entry off, or
+  answer stays in view after the full reply has scrolled away. Press `( )` to check an entry off, or
   the `↑` beside the answer to scroll the conversation back to the full one (fullscreen mode). The
   newest 30 are kept.
 - **Design points.** The points of a plan that still need deciding, in the plan's order: not
   settled yet, being discussed, or settled with the decision in a line or two. Claude takes them
   one at a time and marks one settled only when you have agreed. The box is drawn only while there
   are design points. Claude also writes each decision into the plan itself.
-- **Notes.** Your own notes, which only you add: type `/sticky note <text>`. Press `○` to remove
+- **Notes.** Your own notes, which only you add: type `/sticky note <text>`. Press `( )` to remove
   one. The board does not tell Claude about them unless a prompt names one by its label. The
   newest 30 are kept, and the box is drawn only while there are notes.
 
@@ -209,7 +208,7 @@ installed yourself add to Claude's instructions; only plugins your organization 
 
 What still works:
 
-- Everything you see and do on the board: the boxes, `/sticky`, `/sticky note`, the `○` and `↑`
+- Everything you see and do on the board: the boxes, `/sticky`, `/sticky note`, the `( )` and `↑`
   marks, scrolling, and the board coming back when you resume a conversation.
 - The five tools Claude uses to keep the board, each with its own description.
 - The short list of open questions and design points that goes with each of your messages, and
